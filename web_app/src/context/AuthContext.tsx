@@ -6,6 +6,7 @@ interface AuthContextType extends AuthState {
   loginWithEmail: (email: string, pass: string) => Promise<UserProfile>;
   registerWithEmail: (email: string, pass: string, name: string) => Promise<UserProfile>;
   loginWithGoogle: () => Promise<UserProfile>;
+  loginWithGoogleRedirect: () => Promise<void>;
   loginWithMock: (role?: string) => Promise<UserProfile>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -70,6 +71,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const loginWithGoogleRedirect = async () => {
+    setIsLoading(true);
+    try {
+      await authService.loginWithGoogleRedirect();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const loginWithMock = async (role = "admin") => {
     setIsLoading(true);
     try {
@@ -102,6 +112,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithEmail,
         registerWithEmail,
         loginWithGoogle,
+        loginWithGoogleRedirect,
         loginWithMock,
         signOut,
         resetPassword,

@@ -362,17 +362,29 @@ def test_main_window_headless_and_graceful_shutdown(qapp, tmp_path):
     window.set_language("en")
     assert "AI CCTV" in window.windowTitle()
 
-    # 3. Test Sighting Notification Slot
+    # 3. Test Sighting Notification Slot (Direct Auto-Confirmation by Agent)
     sighting = {
         "person_id": "MP-202",
         "person_name": "Kavita",
         "similarity": 0.85,
         "camera_id": "CAM-01",
         "timestamp": time.time(),
-        "status": "PENDING",
+        "face_crop_path": str(tmp_path / "crop.jpg"),
+        "full_frame_path": str(tmp_path / "frame.jpg"),
     }
+    # Create dummy files
+    open(sighting["face_crop_path"], "w").write("test")
+    open(sighting["full_frame_path"], "w").write("test")
+
     window._on_sighting_detected(sighting)
     assert window.timeline_widget.table.rowCount() >= 1
+    assert window.timeline_widget.table.item(0, 4).text() == "CONFIRMED"
+
+    # Verify auto-enqueued in local SQLite store
+    pending = window.local_db.get_pending_sightings()
+    assert len(pending) >= 1
+    assert pending[0]["person_id"] == "MP-202"
+    assert pending[0]["confidence_level"] == "CONFIRMED"
 
     # 4. CRITICAL REQUIREMENT: Test closeEvent cooperative shutdown
     close_evt = QCloseEvent()

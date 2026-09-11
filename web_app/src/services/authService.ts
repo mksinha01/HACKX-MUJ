@@ -2,6 +2,8 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   signOut as fbSignOut, 
   sendPasswordResetEmail,
@@ -13,6 +15,44 @@ import { usersApi } from './api';
 import { UserProfile } from '../types/auth';
 
 type AuthListener = (user: UserProfile | null) => void;
+
+export function formatAuthError(error: any): string {
+  if (!error) return 'An unknown authentication error occurred.';
+  const code = error.code || '';
+  const message = error.message || '';
+
+  if (code === 'auth/operation-not-allowed' || message.includes('OPERATION_NOT_ALLOWED')) {
+    return 'Google Sign-In is not enabled in your Firebase Console. Please go to Firebase Console > Authentication > Sign-in method > Enable Google provider (or use Email Login / 1-Click Dev Mock Login).';
+  }
+  if (code === 'auth/unauthorized-domain' || message.includes('unauthorized-domain')) {
+    return 'This domain (localhost) is not authorized in Firebase Console. Add localhost under Authentication > Settings > Authorized Domains.';
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return 'The sign-in popup was closed before completing login. If the popup closed automatically within seconds, Google Sign-In is not enabled in your Firebase Console.';
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Sign-in popup was blocked by your browser. Please allow popups for localhost or try again.';
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return 'Another sign-in popup is already open. Please complete or close it.';
+  }
+  if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+    return 'Invalid email or password.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'An account with this email address already exists. Please sign in instead.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Password is too weak. Please use at least 6 characters.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Network connection error. Please check your internet connection and try again.';
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return 'An account already exists with the same email address but different sign-in credentials.';
+  }
+  return error.message || 'Authentication failed. Please try again.';
+}
 
 export class AuthService {
   private currentUser: FirebaseUser | null = null;
@@ -31,17 +71,27 @@ export class AuthService {
     }
 
     if (auth) {
+      // Check for redirect result on app initialization
+      getRedirectResult(auth)
+        .then(async (cred) => {
+          if (cred && cred.user) {
+            this.currentUser = cred.user;
+            const token = await cred.user.getIdToken();
+            localStorage.setItem('fmp_auth_token', token);
+            await this.syncAndSetProfile(cred.user);
+          }
+        })
+        .catch((err) => {
+          console.warn('Firebase getRedirectResult error:', err);
+        });
+
       onAuthStateChanged(auth, async (user) => {
         this.currentUser = user;
         if (user) {
           try {
             const token = await user.getIdToken();
             localStorage.setItem('fmp_auth_token', token);
-            // Fetch or sync user profile
-            const profile = await usersApi.getProfile();
-            this.currentProfile = profile;
-            localStorage.setItem('fmp_user_profile', JSON.stringify(profile));
-            this.notifyListeners(profile);
+            await this.syncAndSetProfile(user);
           } catch (err) {
             console.error('Failed to sync authenticated user profile', err);
             this.notifyListeners(this.currentProfile);
@@ -60,6 +110,40 @@ export class AuthService {
         }
       });
     }
+  }
+
+  private async syncAndSetProfile(user: FirebaseUser): Promise<UserProfile> {
+    let profile: UserProfile;
+    try {
+      // First try to get existing profile
+      profile = await usersApi.getProfile();
+    } catch {
+      try {
+        // If profile doesn't exist yet, sync/register with backend
+        profile = await usersApi.sync(
+          user.uid,
+          user.displayName || user.email?.split('@')[0] || 'User',
+          user.email || undefined
+        );
+      } catch (syncErr) {
+        console.warn('Backend sync failed, using fallback profile:', syncErr);
+        profile = {
+          id: user.uid,
+          firebase_uid: user.uid,
+          name: user.displayName || user.email?.split('@')[0] || 'User',
+          email: user.email || null,
+          phone: user.phoneNumber || null,
+          avatar_url: user.photoURL || null,
+          language: 'en',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+    }
+    this.currentProfile = profile;
+    localStorage.setItem('fmp_user_profile', JSON.stringify(profile));
+    this.notifyListeners(profile);
+    return profile;
   }
 
   subscribe(listener: AuthListener): () => void {
@@ -89,33 +173,48 @@ export class AuthService {
     if (!auth) {
       throw new Error("Firebase Authentication is not configured. Please use 1-Click Dev Mock Login.");
     }
-    const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-    this.currentUser = cred.user;
-    const token = await cred.user.getIdToken();
-    localStorage.setItem('fmp_auth_token', token);
-    
-    // Sync with backend database
-    const profile = await usersApi.sync(cred.user.uid, cred.user.displayName || email.split('@')[0], email);
-    this.currentProfile = profile;
-    localStorage.setItem('fmp_user_profile', JSON.stringify(profile));
-    this.notifyListeners(profile);
-    return profile;
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+      this.currentUser = cred.user;
+      const token = await cred.user.getIdToken();
+      localStorage.setItem('fmp_auth_token', token);
+      return await this.syncAndSetProfile(cred.user);
+    } catch (error: any) {
+      throw new Error(formatAuthError(error));
+    }
   }
 
   async registerWithEmail(email: string, pass: string, name: string): Promise<UserProfile> {
     if (!auth) {
       throw new Error("Firebase Authentication is not configured. Please use 1-Click Dev Mock Login.");
     }
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-    this.currentUser = cred.user;
-    const token = await cred.user.getIdToken();
-    localStorage.setItem('fmp_auth_token', token);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+      this.currentUser = cred.user;
+      const token = await cred.user.getIdToken();
+      localStorage.setItem('fmp_auth_token', token);
 
-    const profile = await usersApi.sync(cred.user.uid, name.trim(), email);
-    this.currentProfile = profile;
-    localStorage.setItem('fmp_user_profile', JSON.stringify(profile));
-    this.notifyListeners(profile);
-    return profile;
+      let profile: UserProfile;
+      try {
+        profile = await usersApi.sync(cred.user.uid, name.trim(), email.trim());
+      } catch {
+        profile = {
+          id: cred.user.uid,
+          firebase_uid: cred.user.uid,
+          name: name.trim(),
+          email: email.trim(),
+          language: 'en',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+      this.currentProfile = profile;
+      localStorage.setItem('fmp_user_profile', JSON.stringify(profile));
+      this.notifyListeners(profile);
+      return profile;
+    } catch (error: any) {
+      throw new Error(formatAuthError(error));
+    }
   }
 
   async loginWithGoogle(): Promise<UserProfile> {
@@ -123,20 +222,36 @@ export class AuthService {
       throw new Error("Firebase Authentication is not configured. Please use 1-Click Dev Mock Login.");
     }
     const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(auth, provider);
-    this.currentUser = cred.user;
-    const token = await cred.user.getIdToken();
-    localStorage.setItem('fmp_auth_token', token);
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
 
-    const profile = await usersApi.sync(
-      cred.user.uid, 
-      cred.user.displayName || "Google User", 
-      cred.user.email || undefined
-    );
-    this.currentProfile = profile;
-    localStorage.setItem('fmp_user_profile', JSON.stringify(profile));
-    this.notifyListeners(profile);
-    return profile;
+    try {
+      const cred = await signInWithPopup(auth, provider);
+      this.currentUser = cred.user;
+      const token = await cred.user.getIdToken();
+      localStorage.setItem('fmp_auth_token', token);
+      return await this.syncAndSetProfile(cred.user);
+    } catch (error: any) {
+      console.error("Google login error:", error);
+      throw new Error(formatAuthError(error));
+    }
+  }
+
+  async loginWithGoogleRedirect(): Promise<void> {
+    if (!auth) {
+      throw new Error("Firebase Authentication is not configured. Please use 1-Click Dev Mock Login.");
+    }
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
+    try {
+      await signInWithRedirect(auth, provider);
+    } catch (error: any) {
+      console.error("Google sign-in redirect error:", error);
+      throw new Error(formatAuthError(error));
+    }
   }
 
   async loginWithMock(role = "admin"): Promise<UserProfile> {
@@ -182,7 +297,11 @@ export class AuthService {
     if (!auth) {
       throw new Error("Firebase Authentication is not configured.");
     }
-    await sendPasswordResetEmail(auth, email.trim());
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+    } catch (error: any) {
+      throw new Error(formatAuthError(error));
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 """Missing person reports API endpoints: Atomic multipart submission, photos, sightings, and timeline."""
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -157,7 +158,7 @@ async def create_missing_person_report(
 
             # Attempt face processing
             try:
-                crop_bytes, normed_emb, det_score = process_person_photo(content)
+                crop_bytes, normed_emb, det_score = await asyncio.to_thread(process_person_photo, content)
                 face_url = await _save_face_crop(crop_bytes)
 
                 photo_record.face_crop_path = face_url
@@ -217,10 +218,8 @@ async def list_my_reports(
         user_id=current_user.id,
         page=page,
         per_page=limit,
+        status_filter=status_filter,
     )
-    if status_filter:
-        items = [item for item in items if item.status == status_filter]
-        total = len(items)
 
     return MissingPersonListResponse(
         items=items,
@@ -370,7 +369,7 @@ async def upload_additional_photo(
 
     # Process face
     try:
-        crop_bytes, normed_emb, det_score = process_person_photo(content)
+        crop_bytes, normed_emb, det_score = await asyncio.to_thread(process_person_photo, content)
         face_url = await _save_face_crop(crop_bytes)
 
         photo_record.face_crop_path = face_url

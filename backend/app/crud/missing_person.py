@@ -34,21 +34,26 @@ async def get_report_by_id(db: AsyncSession, report_id: UUID) -> Optional[Missin
 
 
 async def list_reports_by_user(
-    db: AsyncSession, user_id: UUID, page: int = 1, per_page: int = 20
+    db: AsyncSession, user_id: UUID, page: int = 1, per_page: int = 20,
+    status_filter: Optional[str] = None,
 ) -> tuple[List[MissingPerson], int]:
-    """List reports for a specific user with pagination."""
-    # Count total
-    count_result = await db.execute(
-        select(func.count(MissingPerson.id)).where(MissingPerson.user_id == user_id)
-    )
+    """List reports for a specific user with pagination and optional status filter."""
+    # Build base filters
+    base_filter = [MissingPerson.user_id == user_id]
+    if status_filter:
+        base_filter.append(MissingPerson.status == status_filter)
+
+    # Count total (with filter applied)
+    count_stmt = select(func.count(MissingPerson.id)).where(*base_filter)
+    count_result = await db.execute(count_stmt)
     total = count_result.scalar_one()
 
-    # Fetch page
+    # Fetch page (with filter applied)
     offset = (page - 1) * per_page
     result = await db.execute(
         select(MissingPerson)
         .options(selectinload(MissingPerson.photos))
-        .where(MissingPerson.user_id == user_id)
+        .where(*base_filter)
         .order_by(MissingPerson.created_at.desc())
         .offset(offset)
         .limit(per_page)

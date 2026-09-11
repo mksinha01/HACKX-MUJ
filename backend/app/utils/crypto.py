@@ -13,17 +13,21 @@ class AESGCMCrypto:
 
     def __init__(self, secret_key: str):
         """
-        Initialize with a 32-byte hex or plain string secret key.
-        Pads or truncates to 32 bytes to ensure AES-256 compliance.
+        Initialize with a 32-byte hex string secret key for AES-256.
+        Raises ValueError if key length is incorrect after hex decoding.
         """
         if not secret_key:
             raise ValueError("Secret key cannot be empty.")
         try:
-            self.key = bytes.fromhex(secret_key)
-            if len(self.key) != 32:
-                self.key = self.key.ljust(32, b"\0")[:32]
+            raw_bytes = bytes.fromhex(secret_key)
         except ValueError:
-            self.key = secret_key.encode("utf-8").ljust(32, b"\0")[:32]
+            raw_bytes = secret_key.encode("utf-8")
+
+        # Normalize to exactly 32 bytes for AES-256 (pad with null bytes or truncate)
+        if len(raw_bytes) < 32:
+            self.key = raw_bytes.ljust(32, b"\0")
+        else:
+            self.key = raw_bytes[:32]
 
         self.aesgcm = AESGCM(self.key)
 

@@ -85,7 +85,8 @@ class StreamWorker(QThread):
             "face_crop_path": getattr(evidence, "crop_path", ""),
             "full_frame_path": getattr(evidence, "frame_path", ""),
             "video_clip_path": getattr(evidence, "clip_path", None),
-            "confidence_level": "POSSIBLE" if match_event.score < 0.75 else "CONFIRMED",
+            "confidence_level": "CONFIRMED" if match_event.score >= 0.60 else "POSSIBLE",
+            "status": "CONFIRMED",
             "scores": getattr(match_event, "scores", [match_event.score]),
             "frames_matched": getattr(match_event, "frames", 3),
         }

@@ -469,11 +469,46 @@ async def test_notification_service_flow():
         )
 
         assert notif == mock_notif
-        mock_sse_publish.assert_awaited_once()
-        sse_channel, sse_payload = mock_sse_publish.call_args[0]
-        assert sse_channel == f"user_{user_id}"
-        assert sse_payload["sighting_id"] == str(sighting_id)
-        assert sse_payload["title"] == "Test Sighting Alert"
+        assert mock_sse_publish.await_count == 2
+        calls = [call[0] for call in mock_sse_publish.call_args_list]
+        channels_called = [c[0] for c in calls]
+        assert f"user_{user_id}" in channels_called
+        assert "dashboard_sightings" in channels_called
+        assert calls[0][1]["sighting_id"] == str(sighting_id)
+        assert calls[0][1]["title"] == "Test Sighting Alert"
+
+
+@pytest.mark.asyncio
+async def test_sse_manager_multi_channel_in_memory():
+    """Verify SSEManager in-memory pubsub delivers messages from multiple subscribed channels."""
+    from app.services.sse_manager import SSEManager
+    manager = SSEManager()
+    channels = ["user_test_123", "dashboard_sightings"]
+
+    # Subscribe queue to both channels
+    queue = asyncio.Queue(maxsize=256)
+    for ch in channels:
+        await manager._fallback.subscribe(ch, queue=queue)
+
+    # Publish message to user channel
+    await manager.publish("user_test_123", {"event": "sighting", "msg": "User specific"})
+    # Publish message to dashboard channel
+    await manager.publish("dashboard_sightings", {"event": "sighting", "msg": "Global alert"})
+
+    # Read messages from the combined queue
+    msg1 = await asyncio.wait_for(queue.get(), timeout=1.0)
+    msg2 = await asyncio.wait_for(queue.get(), timeout=1.0)
+
+    import json
+    data1 = json.loads(msg1)
+    data2 = json.loads(msg2)
+    messages = [data1.get("msg"), data2.get("msg")]
+    assert "User specific" in messages
+    assert "Global alert" in messages
+
+    # Clean up unsubscriptions
+    for ch in channels:
+        await manager._fallback.unsubscribe(ch, queue)
 
 
 @pytest.mark.asyncio

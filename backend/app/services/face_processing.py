@@ -14,6 +14,7 @@ except ImportError:
     face_align = None  # type: ignore
     INSIGHTFACE_AVAILABLE = False
 
+from pathlib import Path
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,10 +24,42 @@ _face_app: Optional[FaceAnalysis] = None
 _init_lock = threading.Lock()
 
 
+def _resolve_insightface_root() -> str:
+    """
+    Finds the directory containing the 'models/buffalo_l' model directory.
+    InsightFace FaceAnalysis looks for: <root>/models/buffalo_l/
+    """
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    project_root = backend_dir.parent
+
+    candidates = [
+        Path(settings.AI_MODEL_DIR),
+        project_root / "ai_models",
+        project_root / "backend" / "ai_models",
+        backend_dir / "ai_models",
+        project_root,
+        Path.home() / ".insightface",
+    ]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        c_path = Path(candidate).resolve()
+        # InsightFace expects root such that root/models/buffalo_l exists
+        if (c_path / "models" / "buffalo_l").exists() and any((c_path / "models" / "buffalo_l").glob("*.onnx")):
+            return str(c_path)
+        # If candidate itself is .insightface
+        if c_path.name == ".insightface" and (c_path / "models" / "buffalo_l").exists():
+            return str(c_path)
+
+    # Fallback to configured settings path
+    return str(Path(settings.AI_MODEL_DIR).resolve())
+
+
 def get_face_app() -> FaceAnalysis:
     """
     Returns the singleton InsightFace FaceAnalysis instance configured with buffalo_l.
-    Initializes lazily and thread-safely.
+    Initializes lazily and thread-safely without triggering redundant remote downloads.
     """
     global _face_app
     if not INSIGHTFACE_AVAILABLE:
@@ -35,17 +68,27 @@ def get_face_app() -> FaceAnalysis:
     if _face_app is None:
         with _init_lock:
             if _face_app is None:
-                logger.info(f"Initializing InsightFace buffalo_l from {settings.AI_MODEL_DIR}...")
+                model_root = _resolve_insightface_root()
+                logger.info(f"Initializing InsightFace buffalo_l from root '{model_root}'...")
                 app = FaceAnalysis(
                     name="buffalo_l",
-                    root=settings.AI_MODEL_DIR,
+                    root=model_root,
                     providers=["CPUExecutionProvider"],
                 )
                 app.prepare(ctx_id=-1, det_size=(640, 640))
                 _face_app = app
-                logger.info("InsightFace buffalo_l successfully initialized.")
+                logger.info("InsightFace buffalo_l successfully initialized and ready.")
 
     return _face_app
+
+
+def warmup_face_models() -> None:
+    """Preloads InsightFace buffalo_l models during server startup."""
+    try:
+        get_face_app()
+    except Exception as e:
+        logger.warning(f"Face models warmup skipped or failed: {e}")
+
 
 
 def process_person_photo(image_bytes: bytes) -> Tuple[bytes, np.ndarray, float]:

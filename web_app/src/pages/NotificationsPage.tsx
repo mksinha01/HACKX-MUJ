@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useToast } from '../context/ToastContext';
 import { notificationsApi } from '../services/api';
+import { sseService } from '../services/sseService';
 import { NotificationItem } from '../types/notification';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
@@ -15,8 +16,8 @@ export const NotificationsPage: React.FC = () => {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchNotifications = async () => {
-    setIsLoading(true);
+  const fetchNotifications = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const response = await notificationsApi.list(unreadOnly);
       setNotifications(response.items || []);
@@ -27,7 +28,14 @@ export const NotificationsPage: React.FC = () => {
     }
   };
 
-  useEffect(() => { void fetchNotifications(); }, [unreadOnly]);
+  useEffect(() => {
+    void fetchNotifications();
+    const unsubscribe = sseService.subscribe(() => {
+      void fetchNotifications(true);
+    });
+    sseService.connect();
+    return () => unsubscribe();
+  }, [unreadOnly]);
 
   const handleMarkAllRead = async () => {
     try {

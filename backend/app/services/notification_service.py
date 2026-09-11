@@ -50,7 +50,7 @@ async def dispatch_sighting_alert(
         sighting_id=sighting_id,
     )
 
-    # 2. Broadcast to real-time SSE stream
+    # 2. Broadcast to real-time SSE stream (User personal stream and Command Dashboard)
     sse_payload = {
         "event": "sighting",
         "notification_id": str(notif.id),
@@ -60,6 +60,7 @@ async def dispatch_sighting_alert(
         **payload_data,
     }
     await sse_manager.publish(f"user_{user_id}", sse_payload)
+    await sse_manager.publish("dashboard_sightings", sse_payload)
 
     # 3. Dispatch FCM Push Notification if configured
     user = await get_user_by_id(db, user_id)

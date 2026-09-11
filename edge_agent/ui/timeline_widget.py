@@ -84,7 +84,7 @@ class TimelineWidget(QWidget):
         person_name = sighting.get("person_name", person_id)
         camera_id = sighting.get("camera_id", "CAM-01")
         sim = float(sighting.get("similarity", 0.0)) * 100
-        status = sighting.get("status", "PENDING").upper()
+        status = sighting.get("status", "CONFIRMED").upper()
 
         # Item 0: Time
         item_time = QTableWidgetItem(time_str)

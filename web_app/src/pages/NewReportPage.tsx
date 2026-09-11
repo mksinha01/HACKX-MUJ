@@ -57,7 +57,15 @@ export const NewReportPage: React.FC = () => {
       }
       navigate(`/reports/${created.id}`);
     } catch (submitError: unknown) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to submit report. Please check your network.');
+      let msg = 'Failed to submit report. Please check your connection.';
+      if (submitError instanceof Error) {
+        if (submitError.message.toLowerCase().includes('timeout') || submitError.message.includes('30000ms')) {
+          msg = 'AI face processing took longer than expected. Please check your network and try again.';
+        } else {
+          msg = submitError.message;
+        }
+      }
+      setError(msg);
     } finally {
       setIsSubmitting(false);
     }

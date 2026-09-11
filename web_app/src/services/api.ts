@@ -54,6 +54,7 @@ apiClient.interceptors.response.use(
 export const reportsApi = {
   createAtomic: async (formData: FormData): Promise<MissingPersonResponse> => {
     const res = await apiClient.post<MissingPersonResponse>('/api/reports/', formData, {
+      timeout: 90000, // 90s timeout for multipart upload + AI face analysis
       headers: {
         'Content-Type': undefined, // Let browser set multipart boundary
       },
@@ -85,6 +86,7 @@ export const reportsApi = {
   },
   uploadPhoto: async (id: string, formData: FormData): Promise<unknown> => {
     const res = await apiClient.post(`/api/reports/${id}/photos`, formData, {
+      timeout: 60000, // 60s timeout for single photo upload + AI face analysis
       headers: {
         'Content-Type': undefined,
       },

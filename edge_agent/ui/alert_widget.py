@@ -46,11 +46,13 @@ class AlertWidget(QDialog):
     def __init__(
         self,
         sighting_data: Dict[str, Any],
+        show_actions: bool = False,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self.sighting_data = sighting_data or {}
-        self.setWindowTitle("🚨 Biometric Alert — Possible Match Detected")
+        self.show_actions = show_actions
+        self.setWindowTitle("🚨 Biometric Alert — Match Verified by Agent")
         self.setMinimumSize(560, 520)
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setStyleSheet("""
@@ -76,17 +78,26 @@ class AlertWidget(QDialog):
         main_layout.setSpacing(14)
 
         # 1. Alert Banner
-        self.banner = QLabel("🚨 POSSIBLE MATCH DETECTED — OPERATOR REVIEW REQUIRED")
+        if self.show_actions:
+            banner_text = "🚨 POSSIBLE MATCH DETECTED — OPERATOR REVIEW REQUIRED"
+            banner_bg = "#7f1d1d"
+            banner_border = "#ef4444"
+        else:
+            banner_text = "🚨 SIGHTING CONFIRMED — AUTO-VERIFIED BY EDGE AGENT"
+            banner_bg = "#065f46"
+            banner_border = "#10b981"
+
+        self.banner = QLabel(banner_text)
         self.banner.setObjectName("alertBanner")
         self.banner.setAlignment(Qt.AlignCenter)
-        self.banner.setStyleSheet("""
-            background-color: #7f1d1d;
+        self.banner.setStyleSheet(f"""
+            background-color: {banner_bg};
             color: #ffffff;
             font-size: 13px;
             font-weight: 700;
             padding: 8px 12px;
             border-radius: 6px;
-            border: 1px solid #ef4444;
+            border: 1px solid {banner_border};
             letter-spacing: 0.5px;
         """)
         main_layout.addWidget(self.banner)
@@ -217,16 +228,20 @@ class AlertWidget(QDialog):
 
         main_layout.addWidget(meta_group)
 
-        # 4. Operator Review Notes Field
-        notes_label = QLabel("Operator Review Notes (Optional):")
-        notes_label.setStyleSheet("color: #a1a1aa; font-size: 12px; font-weight: 500;")
-        main_layout.addWidget(notes_label)
+        # 4. Operator Review Notes Field (Hidden if show_actions is False)
+        self.notes_label = QLabel("Operator Review Notes (Optional):")
+        self.notes_label.setStyleSheet("color: #a1a1aa; font-size: 12px; font-weight: 500;")
+        main_layout.addWidget(self.notes_label)
 
         self.notes_input = QLineEdit()
         self.notes_input.setPlaceholderText("Enter confirmation details, visible attire, or verification notes...")
         main_layout.addWidget(self.notes_input)
 
-        # 5. Action Buttons (Confirm & Reject)
+        if not self.show_actions:
+            self.notes_label.setVisible(False)
+            self.notes_input.setVisible(False)
+
+        # 5. Action Buttons (Confirm & Reject for review mode, Close for inspector mode)
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(14)
 
@@ -243,6 +258,34 @@ class AlertWidget(QDialog):
         self.confirm_btn.setMinimumHeight(40)
         self.confirm_btn.clicked.connect(self._on_confirm)
         btn_layout.addWidget(self.confirm_btn)
+
+        self.close_btn = QPushButton("Close Evidence Inspector")
+        self.close_btn.setObjectName("closeButton")
+        self.close_btn.setMinimumHeight(40)
+        self.close_btn.setStyleSheet("""
+            QPushButton#closeButton {
+                background-color: #27272a;
+                color: #f4f4f5;
+                font-weight: 600;
+                font-size: 13px;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                padding: 6px 20px;
+            }
+            QPushButton#closeButton:hover {
+                background-color: #3f3f46;
+                border-color: #52525b;
+            }
+        """)
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
+
+        if not self.show_actions:
+            self.reject_btn.setVisible(False)
+            self.confirm_btn.setVisible(False)
+            self.close_btn.setVisible(True)
+        else:
+            self.close_btn.setVisible(False)
 
         main_layout.addLayout(btn_layout)
 

@@ -459,25 +459,50 @@ class MainWindow(QMainWindow):
     def _on_sighting_detected(self, sighting: Dict[str, Any]) -> None:
         """
         Slot triggered when a confirmed biometric match is verified (Rule 8).
-        Pops up AlertWidget with side-by-side photo comparison and logs to timeline.
+        Directly confirmed by agent: automatically marks CONFIRMED, enqueues to SQLite
+        offline queue, logs to timeline, and triggers immediate background upload to central backend.
         """
-        logger.warning(f"Displaying sighting alert popup for person: {sighting.get('person_id')}")
+        person_id = sighting.get("person_id", "UNKNOWN")
+        logger.info(f"Biometric match directly confirmed by agent for person: {person_id}")
 
-        # 1. Add to Chronological Timeline Feed
+        # 1. Ensure status is CONFIRMED
+        sighting["status"] = "CONFIRMED"
+
+        # 2. Enqueue sighting into local SQLite store for durable offline upload
+        if self.local_db is not None:
+            try:
+                raw_ts = sighting.get("timestamp", time.time())
+                detected_at_str = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    time.gmtime(raw_ts),
+                )
+                self.local_db.enqueue_sighting(
+                    person_id=str(person_id),
+                    camera_id=str(sighting.get("camera_id", "CAM-01")),
+                    similarity_score=float(sighting.get("similarity", 0.0)),
+                    detected_at=detected_at_str,
+                    face_crop_path=str(sighting.get("face_crop_path", "")),
+                    full_frame_path=str(sighting.get("full_frame_path", "")),
+                    video_clip_path=sighting.get("video_clip_path"),
+                    confidence_level=str(sighting.get("confidence_level", "CONFIRMED")),
+                    num_frames_matched=int(sighting.get("frames_matched", 3)),
+                    camera_location=sighting.get("camera_location"),
+                )
+            except Exception as e:
+                logger.error(f"Failed to enqueue auto-confirmed sighting into local SQLite: {e}")
+
+        # 3. Add to Chronological Timeline Feed (Displays as CONFIRMED)
         self.timeline_widget.add_sighting(sighting)
 
-        # 2. Increment status bar faces counter
+        # 4. Increment status bar faces counter
         self.status_bar_widget.increment_faces(1)
 
-        # 3. Present side-by-side Biometric Alert Popup
-        alert_dlg = AlertWidget(sighting_data=sighting, parent=self)
-        alert_dlg.confirmed.connect(self._on_alert_confirmed)
-        alert_dlg.rejected.connect(self._on_alert_rejected)
-        self.active_alerts.append(alert_dlg)
-        alert_dlg.show()
+        # 5. Trigger immediate background flush to central backend
+        if self.sync_worker is not None:
+            self.sync_worker.trigger_sync()
 
     def _on_alert_confirmed(self, payload: Dict[str, Any]) -> None:
-        """Operator confirmed sighting match."""
+        """Operator confirmed sighting match (legacy slot maintained for compatibility)."""
         person_id = payload.get("person_id", "")
         self.timeline_widget.update_sighting_status(person_id, "CONFIRMED")
         # Trigger immediate background flush to central backend
@@ -485,15 +510,13 @@ class MainWindow(QMainWindow):
             self.sync_worker.trigger_sync()
 
     def _on_alert_rejected(self, payload: Dict[str, Any]) -> None:
-        """Operator rejected sighting match."""
+        """Operator rejected sighting match (legacy slot maintained for compatibility)."""
         person_id = payload.get("person_id", "")
         self.timeline_widget.update_sighting_status(person_id, "REJECTED")
 
     def _on_timeline_sighting_selected(self, sighting: Dict[str, Any]) -> None:
-        """Re-open review popup when operator double clicks an entry in timeline."""
-        dlg = AlertWidget(sighting_data=sighting, parent=self)
-        dlg.confirmed.connect(self._on_alert_confirmed)
-        dlg.rejected.connect(self._on_alert_rejected)
+        """Open read-only evidence inspector when operator double clicks an entry in timeline."""
+        dlg = AlertWidget(sighting_data=sighting, show_actions=False, parent=self)
         dlg.exec()
 
     # ═════════════════════════════════════════════════════════════════════════

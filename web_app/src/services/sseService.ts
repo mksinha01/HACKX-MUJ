@@ -3,10 +3,20 @@ import { authService } from './authService';
 
 export interface SightingAlertEvent {
   sighting_id: string;
-  similarity: number;
-  camera_id: string;
-  detected_at: string;
-  face_crop_path: string;
+  notification_id?: string;
+  person_id?: string;
+  person_name?: string;
+  similarity: number | string;
+  confidence_level?: string;
+  camera_id?: string;
+  camera_location?: string;
+  detected_at?: string;
+  face_crop_path?: string;
+  full_frame_path?: string;
+  video_clip_path?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  num_frames_matched?: number | null;
   title: string;
   body: string;
 }
@@ -17,6 +27,7 @@ export class SseService {
   private eventSource: EventSource | null = null;
   private listeners: SightingListener[] = [];
   private audioCtx: AudioContext | null = null;
+  private currentToken: string | null = null;
 
   constructor() {
     // Lazy AudioContext setup
@@ -66,10 +77,15 @@ export class SseService {
     const token = await authService.getIdToken();
     if (!token) return;
 
+    if (this.eventSource && this.currentToken === token) {
+      return; // Already connected with active token
+    }
+
     if (this.eventSource) {
       this.eventSource.close();
     }
 
+    this.currentToken = token;
     const url = `${APP_CONSTANTS.API_BASE_URL}/events/stream?token=${encodeURIComponent(token)}`;
     this.eventSource = new EventSource(url);
 

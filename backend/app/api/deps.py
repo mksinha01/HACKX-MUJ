@@ -1,6 +1,8 @@
 """API dependencies: Database sessions, Auth, and Security guards."""
 import hashlib
 import logging
+import os
+import sys
 from typing import AsyncGenerator, Optional
 from uuid import uuid4
 
@@ -76,6 +78,28 @@ async def verify_agent_api_key(
     return agent
 
 
+def _verify_firebase_token_jwks(token: str) -> Optional[dict]:
+    """Verifies Firebase Auth JWT against Google's public JWKS certificates."""
+    try:
+        import jwt
+        from jwt import PyJWKClient
+        jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+        jwks_client = PyJWKClient(jwks_url, cache_jwk_set=True, lifespan=3600)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        project_id = settings.FIREBASE_PROJECT_ID
+        decoded = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=project_id,
+            issuer=f"https://securetoken.google.com/{project_id}",
+        )
+        return decoded
+    except Exception as e:
+        logger.warning(f"JWKS Firebase token verification failed: {e}")
+        return None
+
+
 async def get_current_user(
     auth_header: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     x_firebase_token: Optional[str] = Header(None, alias="X-Firebase-Token"),
@@ -103,30 +127,49 @@ async def get_current_user(
     email: Optional[str] = None
     name: str = "User"
 
-    # Support testing / mock tokens
+    # Support testing / mock tokens (in DEBUG or pytest/test mode)
     if token.startswith("test-") or token.startswith("mock-"):
+        is_dev_or_test = (
+            settings.DEBUG
+            or "pytest" in sys.modules
+            or os.environ.get("PYTEST_CURRENT_TEST") is not None
+            or os.environ.get("TESTING", "").lower() in ("true", "1")
+        )
+        if not is_dev_or_test:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Test/mock tokens are not accepted in production mode",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         firebase_uid = f"uid_{token}"
         email = f"{token}@example.com"
         name = f"Test {token}"
-    elif FIREBASE_AVAILABLE:
-        try:
-            decoded_token = firebase_auth.verify_id_token(token)
+    else:
+        decoded_token = None
+        if FIREBASE_AVAILABLE and len(getattr(firebase_admin, "_apps", {})) > 0:
+            try:
+                decoded_token = firebase_auth.verify_id_token(token)
+            except Exception as e:
+                logger.debug(f"firebase_auth.verify_id_token failed: {e}. Falling back to JWKS.")
+
+        if not decoded_token:
+            decoded_token = _verify_firebase_token_jwks(token)
+
+        if decoded_token:
             firebase_uid = decoded_token.get("uid") or decoded_token.get("sub", "")
             email = decoded_token.get("email")
             name = decoded_token.get("name") or email or "User"
-        except Exception as e:
-            logger.warning(f"Firebase token verification failed: {e}")
+        elif settings.DEBUG:
+            logger.warning("Unverified token accepted under DEBUG mode fallback.")
+            firebase_uid = f"dev_uid_{hashlib.md5(token.encode()).hexdigest()[:16]}"
+            email = f"{firebase_uid}@dev.local"
+            name = "Dev User"
+        else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid Firebase ID token: {str(e)}",
+                detail="Invalid Firebase ID token: verification failed against Firebase and Google JWKS",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-    else:
-        # If Firebase library isn't available and not a test token
-        # Fallback for dev mode
-        firebase_uid = f"dev_uid_{hashlib.md5(token.encode()).hexdigest()[:16]}"
-        email = f"{firebase_uid}@dev.local"
-        name = "Dev User"
 
     if not firebase_uid:
         raise HTTPException(

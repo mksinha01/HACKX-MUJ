@@ -30,6 +30,7 @@ from app.models.sighting import Sighting
 from app.models.user import User
 from app.schemas.sighting import SightingResponse, SightingReview
 from app.services.notification_service import dispatch_sighting_alert
+from app.services.sse_manager import sse_manager
 from app.utils.file_storage import save_upload_file
 
 logger = logging.getLogger(__name__)
@@ -114,34 +115,60 @@ async def report_sighting(
     await db.flush()
     await db.refresh(sighting)
 
-    # 3. Lookup person to notify the creator/family
+    # 3. Lookup person to notify the creator/family and broadcast to dashboard
     result = await db.execute(
         select(MissingPerson).where(MissingPerson.id == person_id)
     )
     person = result.scalar_one_or_none()
 
+    person_name = person.full_name if person else "Unknown Person"
+    pct = int(similarity_score * 100)
+    title = f"Possible Match Detected: {person_name} ({pct}%)"
+    body = (
+        f"A possible match was spotted on camera {camera_location or 'CCTV'} "
+        f"at {detected_at.strftime('%H:%M:%S')}."
+    )
+
+    sighting_data = {
+        "sighting_id": str(sighting.id),
+        "person_id": str(person_id),
+        "person_name": person_name,
+        "similarity": float(similarity_score),
+        "camera_id": str(camera_id),
+        "camera_location": camera_location or "CCTV Surveillance Camera",
+        "confidence_level": confidence_level,
+        "face_crop_path": face_crop_path,
+        "full_frame_path": full_frame_path,
+        "video_clip_path": video_clip_path,
+        "detected_at": detected_at.isoformat() if hasattr(detected_at, "isoformat") else str(detected_at),
+        "latitude": latitude,
+        "longitude": longitude,
+        "num_frames_matched": num_frames_matched,
+    }
+
     if person:
         try:
-            pct = int(similarity_score * 100)
-            title = f"Possible Match Detected: {person.full_name} ({pct}%)"
-            body = (
-                f"A possible match was spotted on camera {camera_location or 'CCTV'} "
-                f"at {detected_at.strftime('%H:%M:%S')}."
-            )
             await dispatch_sighting_alert(
                 db=db,
                 user_id=person.user_id,
                 title=title,
                 body=body,
                 sighting_id=sighting.id,
-                data={
-                    "similarity": str(similarity_score),
-                    "camera_id": str(camera_id),
-                    "face_crop_path": face_crop_path,
-                },
+                data=sighting_data,
             )
         except Exception as ne:
             logger.error(f"Failed to dispatch sighting alert: {ne}")
+    else:
+        try:
+            sse_payload = {
+                "event": "sighting",
+                "title": title,
+                "body": body,
+                **sighting_data,
+            }
+            await sse_manager.publish("dashboard_sightings", sse_payload)
+        except Exception as se:
+            logger.error(f"Failed to broadcast sighting to dashboard: {se}")
 
     return sighting
 

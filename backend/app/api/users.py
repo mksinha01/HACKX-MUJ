@@ -13,11 +13,12 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register_or_sync_user(
     data: UserCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Explicitly create or sync user profile following Firebase client registration.
-    If the user already exists, returns the existing profile.
+    Requires authentication. If the user already exists, returns the existing profile.
     """
     existing = await get_user_by_firebase_uid(db, data.firebase_uid)
     if existing:

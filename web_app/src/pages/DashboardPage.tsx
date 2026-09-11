@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, FileText, Lightbulb, PlusCircle, RefreshCw, Search, Users, Zap } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FileText, Lightbulb, PlusCircle, RefreshCw, Search, Users, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { reportsApi, sightingsApi } from '../services/api';
+import { sseService, SightingAlertEvent } from '../services/sseService';
 import { Sighting } from '../types/sighting';
 import { SightingCard } from '../components/reports/SightingCard';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -14,6 +15,7 @@ export const DashboardPage: React.FC = () => {
   const [sightings, setSightings] = useState<Sighting[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [liveAlert, setLiveAlert] = useState<SightingAlertEvent | null>(null);
 
   const loadDashboardData = async (silent = false) => {
     if (!silent) setIsLoading(true);
@@ -42,8 +44,46 @@ export const DashboardPage: React.FC = () => {
 
   useEffect(() => {
     void loadDashboardData();
-    const interval = setInterval(() => void loadDashboardData(true), 10000);
-    return () => clearInterval(interval);
+
+    const handleLiveSighting = (event: SightingAlertEvent) => {
+      // 1. Instantly increment matches counter
+      setStats((prev) => ({ ...prev, matches: prev.matches + 1 }));
+
+      // 2. Prepend live sighting to the top of the feed
+      const newSighting: Sighting = {
+        id: event.sighting_id,
+        person_id: event.person_id || '',
+        camera_id: event.camera_id || '',
+        agent_id: '',
+        similarity_score: Number(event.similarity || 0),
+        confidence_level: event.confidence_level || 'CONFIRMED',
+        num_frames_matched: event.num_frames_matched ?? 3,
+        camera_location: event.camera_location || 'CCTV Surveillance Camera',
+        latitude: event.latitude,
+        longitude: event.longitude,
+        detected_at: event.detected_at || new Date().toISOString(),
+        face_crop_path: event.face_crop_path || '',
+        full_frame_path: event.full_frame_path || '',
+        video_clip_path: event.video_clip_path,
+        status: 'PENDING',
+        created_at: new Date().toISOString(),
+      };
+
+      setSightings((prev) => [newSighting, ...prev.filter((s) => s.id !== newSighting.id)]);
+      setLiveAlert(event);
+
+      // 3. Background refresh to keep case stats synchronized
+      void loadDashboardData(true);
+    };
+
+    const unsubscribe = sseService.subscribe(handleLiveSighting);
+    sseService.connect();
+
+    const interval = setInterval(() => void loadDashboardData(true), 15000);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, []);
 
   const metrics = [
@@ -55,6 +95,57 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="main-content">
+      {liveAlert && (
+        <div
+          className="glass-panel live-match-banner"
+          style={{
+            marginBottom: '1.5rem',
+            padding: '1.1rem 1.4rem',
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(245, 158, 11, 0.18))',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            borderRadius: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem',
+            boxShadow: '0 8px 32px rgba(239, 68, 68, 0.15)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <span style={{ fontSize: '1.75rem', lineHeight: 1 }}>🚨</span>
+            <div>
+              <strong style={{ display: 'block', color: 'var(--text-primary)', fontSize: '1.05rem', fontWeight: 700 }}>
+                {liveAlert.title || 'Live Face Match Detected!'}
+              </strong>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                {liveAlert.body || `Possible biometric match spotted on camera ${liveAlert.camera_location || 'CCTV'}`}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <button
+              type="button"
+              onClick={() => navigate(`/sightings/${liveAlert.sighting_id}`)}
+              className="btn btn-primary btn-sm"
+              style={{ fontWeight: 600 }}
+            >
+              <AlertCircle size={15} aria-hidden="true" />
+              <span>Inspect Evidence</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLiveAlert(null)}
+              className="btn btn-secondary btn-sm"
+              aria-label="Dismiss alert"
+              style={{ padding: '0.35rem 0.65rem' }}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       <section className="stats-grid" aria-label="System metrics">
         {metrics.map(({ label, value, hint, icon: Icon, tone }) => (
           <div className={`glass-panel dashboard-metric dashboard-metric--${tone}`} key={label}>

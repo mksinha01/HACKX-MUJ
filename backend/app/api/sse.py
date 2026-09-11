@@ -43,13 +43,14 @@ async def events_stream(
     # Resolve user
     user = await get_current_user(
         auth_header=HTTPAuthorizationCredentials(scheme="Bearer", credentials=effective_token),
+        x_firebase_token=None,
         db=db,
     )
 
-    channel = f"user_{user.id}"
+    channels = [f"user_{user.id}", "dashboard_sightings"]
 
     return StreamingResponse(
-        sse_manager.event_generator(channel=channel, request=request),
+        sse_manager.event_generator(channel=channels, request=request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
