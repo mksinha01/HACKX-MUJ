@@ -60,3 +60,14 @@ If you want to secure your application with HTTPS (required for accessing Webcam
 1. Purchase a domain name and point an `A Record` to your Droplet IP.
 2. Use **Cloudflare** (Free tier) to proxy your traffic. Cloudflare will automatically provide HTTPS encryption between your users and Cloudflare, while talking HTTP to your Droplet on port 80.
 3. Alternatively, you can install **Caddy** on your droplet as a reverse proxy, which automatically provisions Let's Encrypt certificates.
+
+## 8. Continuous Deployment (CI/CD) with GitHub Actions
+If you want your Droplet to automatically pull new code and restart whenever you `git push` to your GitHub repository:
+
+1. Go to your GitHub repository in the browser.
+2. Click **Settings** > **Secrets and variables** > **Actions**.
+3. Click **New repository secret**.
+4. Add a secret named `DROPLET_IP` and paste your Droplet's IP address (e.g. `137.184.144.190`).
+5. Click **New repository secret** again.
+6. Add a secret named `DROPLET_PASSWORD` and paste the password you use to log into your Droplet.
+7. Now, whenever you push code to the `main` branch, the `.github/workflows/deploy.yml` file will automatically SSH into your Droplet and run the deployment commands for you!
