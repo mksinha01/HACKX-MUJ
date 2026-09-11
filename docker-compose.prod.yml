@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fmp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fmp_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-fmp_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fmp_user} -d ${POSTGRES_DB:-fmp_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - APP_ENV=production
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-fmp_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-fmp_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-fmp_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-fmp_user}:${POSTGRES_PASSWORD:-fmp_pass}@postgres:5432/${POSTGRES_DB:-fmp_db}
+      - REDIS_URL=redis://redis:6379/0
+      - ADMIN_ENROLLMENT_KEY=${ADMIN_ENROLLMENT_KEY:-prod-secret-change-me}
+      - RTSP_SECRET_KEY=${RTSP_SECRET_KEY:-32bytehexsecretforaesencryption00}
+      - UPLOAD_DIR=/app/uploads
+      - AI_MODEL_DIR=/app/ai_models
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web_app:
+    build:
+      context: ./web_app
+      dockerfile: Dockerfile
+      args:
+        # Pass environment variables needed during build
+        VITE_API_BASE_URL: ""
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
