@@ -65,7 +65,13 @@ async def init_db() -> None:
         logger.info(f"Database connection verified and tables initialized on {engine.url}")
     except Exception as e:
         err_msg = str(e).lower()
-        if "connect" in err_msg or "refused" in err_msg or "timeout" in err_msg or "is the server running" in err_msg or "10061" in err_msg:
+        is_connection_error = any(
+            term in err_msg
+            for term in ("connect", "refused", "timeout", "is the server running", "10061")
+        )
+        
+        if is_connection_error and not settings.is_production:
+            # Only fall back to SQLite in development mode
             fallback_url = "sqlite+aiosqlite:///backend_local.db"
             logger.warning(
                 f"Could not connect to database ({engine.url}); falling back to local SQLite: {fallback_url}"
@@ -79,6 +85,12 @@ async def init_db() -> None:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             logger.info("Local SQLite database initialized with all tables successfully.")
+        elif is_connection_error and settings.is_production:
+            logger.error(
+                f"FATAL: Cannot connect to database in production mode ({engine.url}). "
+                f"SQLite fallback is disabled in production to prevent data loss."
+            )
+            raise
         else:
             raise
 

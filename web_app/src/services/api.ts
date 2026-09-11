@@ -170,3 +170,31 @@ export const usersApi = {
     return res.data;
   },
 };
+
+// ── FIR Verification API ──
+export const firApi = {
+  /** List reports pending FIR review */
+  getPending: async (): Promise<MissingPersonResponse[]> => {
+    const res = await apiClient.get<MissingPersonResponse[]>('/api/fir/pending');
+    return res.data;
+  },
+  /** Admin approves a FIR — activates report for CCTV matching */
+  verify: async (reportId: string, notes?: string): Promise<MissingPersonResponse> => {
+    const res = await apiClient.post<MissingPersonResponse>(`/api/fir/verify/${reportId}`, {
+      notes,
+    });
+    return res.data;
+  },
+  /** Admin rejects a FIR — user must resubmit */
+  reject: async (reportId: string, reason: string): Promise<MissingPersonResponse> => {
+    const res = await apiClient.post<MissingPersonResponse>(`/api/fir/reject/${reportId}`, {
+      reason,
+    });
+    return res.data;
+  },
+  /** Real-time FIR number format validation */
+  validateNumber: async (firNumber: string): Promise<{ fir_number: string; is_valid: boolean; message: string; confidence: number }> => {
+    const res = await apiClient.get(`/api/fir/validate/${encodeURIComponent(firNumber)}`);
+    return res.data;
+  },
+};

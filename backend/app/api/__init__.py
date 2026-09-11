@@ -10,6 +10,7 @@ from app.api.sightings import router as sightings_router
 from app.api.embeddings import router as embeddings_router
 from app.api.notifications import router as notifications_router
 from app.api.sse import router as sse_router
+from app.api.fir_verification import router as fir_router
 
 api_router = APIRouter(prefix="/api")
 
@@ -22,6 +23,7 @@ api_router.include_router(sightings_router)
 api_router.include_router(embeddings_router)
 api_router.include_router(notifications_router)
 api_router.include_router(sse_router)
+api_router.include_router(fir_router)
 
 __all__ = [
     "api_router",
@@ -34,4 +36,5 @@ __all__ = [
     "embeddings_router",
     "notifications_router",
     "sse_router",
+    "fir_router",
 ]

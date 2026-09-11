@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import {
   Bell,
-  ChevronDown,
   FileText,
   Globe,
   LayoutDashboard,
@@ -179,7 +178,7 @@ export const Navbar: React.FC = () => {
             <span className="rail-user__name">{user?.name || 'Authorized User'}</span>
             <span className="rail-user__email">{user?.email || 'Active session'}</span>
           </span>
-          <ChevronDown size={14} className="rail-user__chevron" aria-hidden="true" />
+          <span aria-hidden="true">⋯</span>
         </button>
 
         {userDropdownOpen && (

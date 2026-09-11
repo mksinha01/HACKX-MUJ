@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, verify_agent_api_key, verify_enrollment_key
+from app.api.deps import get_db, verify_agent_api_key, verify_enrollment_key, get_current_user
 from app.config import settings
 from app.crud.edge_agent import (
     get_agent_by_id,
@@ -89,18 +89,20 @@ async def agent_heartbeat(
 
 @router.get("/", response_model=List[AgentResponse])
 async def list_all_agents(
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all registered edge agent devices."""
+    """List all registered edge agent devices. Requires authentication."""
     return await list_agents(db)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
 async def get_agent_detail(
     agent_id: UUID,
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get details of a specific edge agent."""
+    """Get details of a specific edge agent. Requires authentication."""
     agent = await get_agent_by_id(db, agent_id)
     if not agent:
         raise HTTPException(

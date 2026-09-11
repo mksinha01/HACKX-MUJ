@@ -48,16 +48,18 @@ async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and graceful shutdown."""
     logger.info("Initializing FIND-MISSING-PEP Backend Services...")
 
-    # Security: warn about default secrets
-    if settings.ADMIN_ENROLLMENT_KEY == "dev-enroll-secret-change-me":
-        logger.warning(
-            "⚠️  SECURITY WARNING: ADMIN_ENROLLMENT_KEY is set to the default value! "
-            "Change it via .env before deploying to production."
-        )
-    if settings.RTSP_SECRET_KEY == "32bytehexsecretforaesencryption00":
-        logger.warning(
-            "⚠️  SECURITY WARNING: RTSP_SECRET_KEY is set to the default value! "
-            "Change it via .env before deploying to production."
+    # Security: validate secrets configuration
+    security_warnings = settings.validate_secrets_for_production()
+    for warning in security_warnings:
+        if settings.is_production:
+            logger.error(f"🚫 SECURITY BLOCK: {warning}")
+        else:
+            logger.warning(f"⚠️  SECURITY WARNING: {warning}")
+    
+    if settings.is_production and security_warnings:
+        raise RuntimeError(
+            "Cannot start in production mode with insecure configuration. "
+            "Fix the warnings above before deploying."
         )
 
     ensure_upload_directories()
@@ -85,7 +87,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # 1. CORS Middleware — explicit origins instead of wildcard for security
+    # 1. CORS Middleware — explicit origins, methods, and headers for security
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -95,8 +97,15 @@ def create_app() -> FastAPI:
             "http://127.0.0.1:8000",
         ],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "X-Firebase-Token",
+            "X-API-Key",
+            "X-Enrollment-Key",
+        ],
     )
 
     # 2. Static File Mount for uploaded media

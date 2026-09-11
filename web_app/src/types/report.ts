@@ -3,7 +3,11 @@ export type CaseStatus =
   | 'FOUND'
   | 'PROCESSING'
   | 'CLOSED'
-  | 'REJECTED_NO_FACE';
+  | 'REJECTED_NO_FACE'
+  | 'PENDING_FIR_REVIEW'
+  | 'FIR_REJECTED';
+
+export type FIRStatus = 'PENDING' | 'VERIFIED' | 'REJECTED' | 'WAIVED';
 
 export type Gender = 'Male' | 'Female' | 'Other';
 
@@ -31,6 +35,15 @@ export interface MissingPerson {
   status: CaseStatus;
   primary_photo_url?: string | null;
   photos: PhotoItem[];
+  // FIR fields
+  fir_number?: string | null;
+  fir_police_station?: string | null;
+  fir_date?: string | null;
+  fir_status?: FIRStatus | null;
+  fir_document_path?: string | null;
+  fir_rejection_reason?: string | null;
+  fir_verified_at?: string | null;
+  // Timestamps
   created_at: string;
   updated_at: string;
 }
@@ -44,4 +57,8 @@ export interface MissingPersonCreatePayload {
   last_seen_location: string;
   last_seen_time: string;
   contact_info: string;
+  // FIR fields — required
+  fir_number: string;
+  fir_police_station: string;
+  fir_date?: string;
 }

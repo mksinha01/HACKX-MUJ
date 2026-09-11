@@ -43,9 +43,10 @@ router = APIRouter(prefix="/sightings", tags=["sightings"])
 async def list_recent_sightings(
     limit: int = 50,
     status_filter: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List recent sightings across all cameras for dashboard monitoring."""
+    """List recent sightings across all cameras for dashboard monitoring. Requires authentication."""
     return await list_all_sightings(db, limit=limit, status_filter=status_filter)
 
 
@@ -236,9 +237,10 @@ async def report_sighting(
 @router.get("/{sighting_id}", response_model=SightingResponse)
 async def get_sighting_detail(
     sighting_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieve details and evidence paths for a specific sighting."""
+    """Retrieve details and evidence paths for a specific sighting. Requires authentication."""
     sighting = await get_sighting_by_id(db, sighting_id)
     if not sighting:
         raise HTTPException(

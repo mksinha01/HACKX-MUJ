@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Calendar, Camera, CheckCircle, Map, MapPin, Phone, Plus, User, XCircle } from 'lucide-react';
+import { ArrowLeft, Calendar, Camera, CheckCircle, Map, MapPin, Phone, Plus, Shield, User, XCircle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useToast } from '../context/ToastContext';
@@ -12,6 +12,7 @@ import { ConfirmModal } from '../components/common/ConfirmModal';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { APP_CONSTANTS } from '../config/constants';
 import { compressImage } from '../services/imageService';
+import { FIRStatusBadge } from '../components/common/FIRStatusBadge';
 
 export const ReportDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -128,6 +129,45 @@ export const ReportDetailPage: React.FC = () => {
             <div><span>{t.reports.contactLabel}</span><strong><Phone size={15} aria-hidden="true" /> {person.contact_info}</strong></div>
           </div>
           {person.description && <div className="detail-description"><h4>{t.reports.identifyingFeatures}</h4><p>{person.description}</p></div>}
+
+          {/* ── FIR Details Section ── */}
+          {person.fir_number && (
+            <div className="detail-description">
+              <h4><Shield size={16} aria-hidden="true" /> FIR Verification</h4>
+              <FIRStatusBadge status={person.fir_status} rejectionReason={person.fir_rejection_reason} />
+              <div className="fir-details">
+                <div className="fir-detail-item">
+                  <span className="fir-detail-item__label">FIR Number</span>
+                  <span className="fir-detail-item__value">{person.fir_number}</span>
+                </div>
+                <div className="fir-detail-item">
+                  <span className="fir-detail-item__label">Police Station</span>
+                  <span className="fir-detail-item__value">{person.fir_police_station || '—'}</span>
+                </div>
+                {person.fir_date && (
+                  <div className="fir-detail-item">
+                    <span className="fir-detail-item__label">FIR Date</span>
+                    <span className="fir-detail-item__value">{new Date(person.fir_date).toLocaleDateString()}</span>
+                  </div>
+                )}
+                {person.fir_verified_at && (
+                  <div className="fir-detail-item">
+                    <span className="fir-detail-item__label">Verified At</span>
+                    <span className="fir-detail-item__value">{new Date(person.fir_verified_at).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+              {person.fir_status === 'REJECTED' && person.fir_rejection_reason && (
+                <div className="fir-rejection-banner">
+                  <XCircle size={18} />
+                  <div>
+                    <strong>FIR Rejected</strong>
+                    <span>{person.fir_rejection_reason}. Please update your FIR details and resubmit.</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

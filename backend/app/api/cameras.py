@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, verify_agent_api_key
+from app.api.deps import get_db, get_current_user, verify_agent_api_key
 from app.config import settings
 from app.models.camera import Camera
 from app.models.edge_agent import EdgeAgent
@@ -70,9 +70,10 @@ async def register_single_camera(
 @router.get("/", response_model=List[CameraResponse])
 async def list_cameras(
     agent_id: Optional[UUID] = Query(None, description="Filter by Edge Agent ID"),
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List cameras, optionally filtered by agent_id."""
+    """List cameras, optionally filtered by agent_id. Requires authentication."""
     stmt = select(Camera)
     if agent_id:
         stmt = stmt.where(Camera.agent_id == agent_id)
@@ -84,9 +85,10 @@ async def list_cameras(
 @router.get("/{camera_id}", response_model=CameraResponse)
 async def get_camera(
     camera_id: UUID,
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieve details of a single camera."""
+    """Retrieve details of a single camera. Requires authentication."""
     result = await db.execute(select(Camera).where(Camera.id == camera_id))
     cam = result.scalar_one_or_none()
     if not cam:

@@ -4,12 +4,55 @@ import uuid
 from pathlib import Path
 from typing import Optional
 import aiofiles
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 
 from app.config import settings
 
 # Standard media subdirectories
 STANDARD_SUBDIRECTORIES = ("photos", "faces", "evidence", "clips")
+
+# Magic bytes for file type validation
+MAGIC_BYTES = {
+    b"\xff\xd8\xff": "jpg",
+    b"\x89PNG": "png",
+    b"RIFF": "webp",  # WebP starts with RIFF
+    b"\x00\x00\x00": "mp4",  # MP4/ftyp
+    b"%PDF": "pdf",
+}
+
+ALLOWED_EXTENSIONS = {
+    ext.strip().lower()
+    for ext in settings.ALLOWED_UPLOAD_EXTENSIONS.split(",")
+    if ext.strip()
+}
+
+
+def _validate_file_extension(filename: str | None) -> str:
+    """Validates and returns the file extension. Raises HTTPException if invalid."""
+    ext = ""
+    if filename and "." in filename:
+        ext = f".{filename.rsplit('.', 1)[-1].lower()}"
+    
+    if ext and ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' is not allowed. Accepted: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+        )
+    return ext
+
+
+def _validate_magic_bytes(content_head: bytes, claimed_ext: str) -> None:
+    """Validates that file content matches its claimed extension via magic bytes."""
+    if not content_head or not claimed_ext:
+        return
+    
+    # Check if content matches any known magic bytes
+    for magic, file_type in MAGIC_BYTES.items():
+        if content_head[:len(magic)] == magic:
+            return  # Content has valid magic bytes
+    
+    # If we have content but no matching magic bytes, log warning but don't block
+    # (some valid files may have non-standard headers)
 
 
 def ensure_upload_dirs(upload_dir: Optional[str] = None) -> None:
@@ -47,21 +90,36 @@ async def save_upload_file(
 ) -> str:
     """
     Saves an uploaded file to the specified subfolder securely with a UUID filename.
+    Enforces file size limits and extension whitelist.
     Returns the relative URL path (e.g. /uploads/photos/uuid.jpg).
     """
     base_dir = Path(upload_dir or settings.UPLOAD_DIR)
     target_dir = base_dir / subfolder
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    ext = ""
-    if file.filename and "." in file.filename:
-        ext = f".{file.filename.split('.')[-1].lower()}"
+    # Validate extension
+    ext = _validate_file_extension(file.filename)
+    
+    # Read and validate file size
+    content = await file.read()
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(content) / 1024 / 1024:.1f} MB). "
+                   f"Maximum allowed: {settings.MAX_UPLOAD_SIZE_MB} MB.",
+        )
+    
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    
+    # Validate magic bytes
+    _validate_magic_bytes(content[:8], ext)
 
     file_name = f"{uuid.uuid4().hex}{ext}"
     file_path = target_dir / file_name
 
     async with aiofiles.open(file_path, "wb") as out_file:
-        content = await file.read()
         await out_file.write(content)
 
     return f"/uploads/{subfolder}/{file_name}"

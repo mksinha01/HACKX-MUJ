@@ -84,18 +84,31 @@ async def create_missing_person_report(
     last_seen_location: Optional[str] = Form(None),
     last_seen_time: Optional[datetime] = Form(None),
     contact_info: Optional[str] = Form(None),
+    # FIR fields — required
+    fir_number: Optional[str] = Form(None, description="FIR number from police station"),
+    fir_police_station: Optional[str] = Form(None, description="Police station name"),
+    fir_date: Optional[datetime] = Form(None, description="Date FIR was filed"),
     photos: List[UploadFile] = File(
         default=[],
         description="1-5 photo files of the missing person",
+    ),
+    fir_document: Optional[UploadFile] = File(
+        None,
+        description="Scanned FIR document (PDF, JPEG, or PNG)",
     ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Atomic multipart submission for creating a missing person report.
-    Accepts metadata and photos in a single HTTP request.
-    Performs face detection, landmark alignment, and 512-D ArcFace embedding generation.
-    If valid face embeddings are extracted, status transitions directly to ACTIVE.
+    Atomic multipart submission for creating a missing person report with FIR verification.
+    Accepts metadata, photos, and FIR details in a single HTTP request.
+    Performs face detection, landmark alignment, 512-D ArcFace embedding generation,
+    and FIR validation (format check + police station cross-reference).
+    
+    Status lifecycle:
+      PROCESSING → PENDING_FIR_REVIEW → ACTIVE (when FIR verified)
+      PROCESSING → REJECTED_NO_FACE (no valid face detected)
+      PROCESSING → FIR_REJECTED (invalid FIR details)
     """
     # 1. Parse report metadata
     if report_data:
@@ -117,6 +130,9 @@ async def create_missing_person_report(
             last_seen_location=last_seen_location,
             last_seen_time=last_seen_time,
             contact_info=contact_info,
+            fir_number=fir_number or "",
+            fir_police_station=fir_police_station or "",
+            fir_date=fir_date,
         )
     else:
         raise HTTPException(
@@ -124,10 +140,53 @@ async def create_missing_person_report(
             detail="Missing report metadata (provide report_data JSON or individual form fields)",
         )
 
-    # 2. Create base report with status PROCESSING
-    report = await create_report(db, user_id=current_user.id, data=create_payload)
+    # 2. Run FIR validation
+    from app.services.fir_validation import fir_validator
+    
+    fir_doc_bytes = None
+    fir_doc_filename = None
+    if fir_document and fir_document.filename:
+        fir_doc_bytes = await fir_document.read()
+        fir_doc_filename = fir_document.filename
+    
+    fir_result = fir_validator.run_full_validation(
+        fir_number=create_payload.fir_number,
+        police_station=create_payload.fir_police_station,
+        fir_date=create_payload.fir_date,
+        document_bytes=fir_doc_bytes,
+        document_filename=fir_doc_filename,
+    )
+    
+    # Save FIR document if provided
+    fir_doc_path = None
+    if fir_doc_bytes and fir_doc_filename:
+        await fir_document.seek(0)
+        fir_doc_path = await save_upload_file(
+            file=fir_document,
+            subfolder="evidence",
+            upload_dir=settings.UPLOAD_DIR,
+        )
 
-    # 3. Process photos if provided
+    # 3. Create base report with status PROCESSING
+    report = await create_report(db, user_id=current_user.id, data=create_payload)
+    
+    # Set FIR fields on the report
+    report.fir_number = create_payload.fir_number
+    report.fir_police_station = create_payload.fir_police_station
+    report.fir_date = create_payload.fir_date
+    report.fir_document_path = fir_doc_path
+
+    # Check if FIR was rejected at format level
+    if fir_result["overall_status"] == "REJECTED":
+        report.status = "FIR_REJECTED"
+        report.fir_status = "REJECTED"
+        report.fir_rejection_reason = fir_result["message"]
+        await db.flush()
+        await db.refresh(report)
+        full_report = await get_report_by_id(db, report.id)
+        return full_report or report
+
+    # 4. Process photos if provided
     active_embeddings_count = 0
 
     for idx, photo_file in enumerate(photos):
@@ -186,12 +245,19 @@ async def create_missing_person_report(
         except Exception as pe:
             logger.error(f"Error handling photo upload {photo_file.filename}: {pe}")
 
-    # 4. Determine final status
+    # 5. Determine final status based on face processing + FIR validation
     if photos:
         if active_embeddings_count > 0:
-            report.status = "ACTIVE"
+            # Face found — check FIR status
+            if fir_result["auto_approved"]:
+                report.status = "ACTIVE"
+                report.fir_status = "VERIFIED"
+            else:
+                report.status = "PENDING_FIR_REVIEW"
+                report.fir_status = "PENDING"
         else:
             report.status = "REJECTED_NO_FACE"
+            report.fir_status = create_payload.fir_number and "PENDING" or "PENDING"
     else:
         # If no photos were attached yet, report remains in PROCESSING status
         report.status = "PROCESSING"
@@ -234,9 +300,10 @@ async def list_all_missing_persons(
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all missing persons across users for dashboard overview."""
+    """List all missing persons across users for dashboard overview. Requires authentication."""
     items, total = await list_all_reports(
         db=db,
         status_filter=status_filter,
@@ -254,9 +321,10 @@ async def list_all_missing_persons(
 @router.get("/{report_id}", response_model=MissingPersonResponse)
 async def get_report_detail(
     report_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieve full details of a specific report including photos."""
+    """Retrieve full details of a specific report including photos. Requires authentication."""
     report = await get_report_by_id(db, report_id)
     if not report:
         raise HTTPException(
@@ -401,15 +469,17 @@ async def upload_additional_photo(
 @router.get("/{report_id}/sightings", response_model=List[SightingResponse])
 async def get_report_sightings(
     report_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all sightings for a specific missing person."""
+    """List all sightings for a specific missing person. Requires authentication."""
     return await list_sightings_for_person(db, report_id)
 
 
 @router.get("/{report_id}/timeline", response_model=PersonTimeline)
 async def get_report_timeline(
     report_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """

@@ -1,6 +1,10 @@
-# Environment
+# Environment & Secrets
 .env
 *.env
+!.env.example
+!*.env.example
+web_app/.env
+backend/.env
 firebase-sa.json
 google-services.json
 GoogleService-Info.plist

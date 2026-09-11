@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { PlusCircle, RefreshCw, Search, Users, UserX } from 'lucide-react';
+import { PlusCircle, RefreshCw, Search, UserX } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { reportsApi } from '../services/api';
@@ -57,7 +57,7 @@ export const MyReportsPage: React.FC = () => {
     <div className="main-content">
       <div className="section-header">
         <div>
-          <h2 className="section-title"><Users size={20} className="section-title__icon" aria-hidden="true" /> {t.reports.title}</h2>
+          <h2 className="section-title"><span aria-hidden="true">👥</span> {t.reports.title}</h2>
           <p className="section-subtitle">{t.reports.subtitle}</p>
         </div>
         <div className="page-actions">

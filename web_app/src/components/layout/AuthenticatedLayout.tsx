@@ -15,9 +15,9 @@ export const AuthenticatedLayout: React.FC = () => {
       const loc = event.camera_location || 'CCTV Camera';
 
       addToast(
-        `Biometric Match (${simPct}%): ${name} spotted on ${loc}. Open Dashboard to inspect evidence.`,
+        `🚨 Biometric Match (${simPct}%): ${name} spotted on ${loc}. Tap Alerts or Dashboard to inspect evidence.`,
         'warning',
-        event.title || 'Biometric Face Match Detected'
+        event.title || 'Possible Face Match Detected'
       );
     };
 

@@ -127,18 +127,18 @@ async def get_current_user(
     email: Optional[str] = None
     name: str = "User"
 
-    # Support testing / mock tokens (in DEBUG or pytest/test mode)
+    # Support testing / mock tokens — ONLY in explicit test mode
     if token.startswith("test-") or token.startswith("mock-"):
-        is_dev_or_test = (
-            settings.DEBUG
-            or "pytest" in sys.modules
-            or os.environ.get("PYTEST_CURRENT_TEST") is not None
-            or os.environ.get("TESTING", "").lower() in ("true", "1")
+        is_explicit_test = (
+            ("pytest" in sys.modules)
+            or (os.environ.get("PYTEST_CURRENT_TEST") is not None)
+            or (os.environ.get("TESTING", "").lower() in ("true", "1"))
         )
-        if not is_dev_or_test:
+        if not is_explicit_test:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Test/mock tokens are not accepted in production mode",
+                detail="Test/mock tokens are not accepted outside of test mode. "
+                       "Set TESTING=true env var to enable.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         firebase_uid = f"uid_{token}"
@@ -159,12 +159,9 @@ async def get_current_user(
             firebase_uid = decoded_token.get("uid") or decoded_token.get("sub", "")
             email = decoded_token.get("email")
             name = decoded_token.get("name") or email or "User"
-        elif settings.DEBUG:
-            logger.warning("Unverified token accepted under DEBUG mode fallback.")
-            firebase_uid = f"dev_uid_{hashlib.md5(token.encode()).hexdigest()[:16]}"
-            email = f"{firebase_uid}@dev.local"
-            name = "Dev User"
         else:
+            # SECURITY: Never accept unverified tokens, even in DEBUG mode.
+            # The DEBUG fallback has been removed to prevent auth bypass.
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Firebase ID token: verification failed against Firebase and Google JWKS",
