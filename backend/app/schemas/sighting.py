@@ -21,7 +21,7 @@ class SightingCreate(BaseModel):
 
 class SightingReview(BaseModel):
     """Operator review of a sighting."""
-    status: str  # CONFIRMED | REJECTED
+    status: Optional[str] = None  # CONFIRMED | REJECTED
     review_notes: Optional[str] = None
 
 
@@ -29,6 +29,7 @@ class SightingResponse(BaseModel):
     """Sighting data in responses."""
     id: UUID
     person_id: UUID
+    person_name: Optional[str] = None
     agent_id: UUID
     camera_id: UUID
     similarity_score: float

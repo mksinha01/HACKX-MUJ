@@ -94,7 +94,7 @@ export const TimelineMap: React.FC<TimelineMapProps> = ({
         marker.bindPopup(`
           <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
             <div style="font-weight: 700; font-size: 14px; margin-bottom: 2px;">
-              ${isLastSeen ? '🚨 Last Seen Location' : `Stop #${idx + 1}`}
+              ${isLastSeen ? 'Latest Detected Location' : `Stop #${idx + 1}`}
             </div>
             <div style="font-size: 12px; color: #475569;">${point.camera_name}</div>
             <div style="font-size: 11px; color: #64748b; margin-top: 4px;">

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, ArrowLeft, Send } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Send, UserPlus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useToast } from '../context/ToastContext';
@@ -76,7 +76,7 @@ export const NewReportPage: React.FC = () => {
       <button type="button" onClick={() => navigate(-1)} className="btn btn-secondary btn-sm page-back"><ArrowLeft size={16} aria-hidden="true" /> Back</button>
       <div className="glass-panel form-shell">
         <div className="page-intro">
-          <h2 className="section-title"><span aria-hidden="true">➕</span> {t.form.title}</h2>
+          <h2 className="section-title"><UserPlus size={20} className="section-title__icon" aria-hidden="true" /> {t.form.title}</h2>
           <p className="section-subtitle">{t.form.subtitle}</p>
         </div>
 

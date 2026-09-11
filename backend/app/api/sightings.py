@@ -24,6 +24,7 @@ from app.crud.sighting import (
     list_all_sightings,
     reject_sighting,
 )
+from app.models.camera import Camera
 from app.models.edge_agent import EdgeAgent
 from app.models.missing_person import MissingPerson
 from app.models.sighting import Sighting
@@ -54,8 +55,8 @@ async def list_recent_sightings(
     status_code=status.HTTP_201_CREATED,
 )
 async def report_sighting(
-    person_id: UUID = Form(...),
-    camera_id: UUID = Form(...),
+    person_id: str = Form(..., description="UUID of the missing person"),
+    camera_id: str = Form(..., description="Camera UUID or local identifier e.g. CAM-01"),
     similarity_score: float = Form(...),
     detected_at: datetime = Form(...),
     confidence_level: str = Form("POSSIBLE"),
@@ -74,6 +75,64 @@ async def report_sighting(
     Saves evidence files (face crop, full frame, optional video clip),
     creates a Sighting record, and dispatches FCM/SSE notifications to the report owner.
     """
+    # 0. Validate and resolve person_id
+    try:
+        resolved_person_id = UUID(str(person_id).strip())
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid person_id: '{person_id}' is not a valid UUID",
+        )
+
+    # 0b. Resolve camera_id (supports backend UUID or local identifier like 'CAM-01')
+    resolved_camera_id: Optional[UUID] = None
+    clean_cam_str = str(camera_id).strip()
+    try:
+        parsed_cam_uuid = UUID(clean_cam_str)
+        cam_res = await db.execute(
+            select(Camera).where(Camera.id == parsed_cam_uuid)
+        )
+        if cam_res.scalar_one_or_none():
+            resolved_camera_id = parsed_cam_uuid
+    except (ValueError, TypeError, AttributeError):
+        pass
+
+    if not resolved_camera_id:
+        # Search by local_camera_id for this agent
+        cam_res = await db.execute(
+            select(Camera).where(
+                Camera.agent_id == agent.id,
+                Camera.local_camera_id == clean_cam_str,
+            )
+        )
+        cam = cam_res.scalar_one_or_none()
+        if cam:
+            resolved_camera_id = cam.id
+
+    if not resolved_camera_id:
+        # Fallback to any registered camera for this agent
+        cam_res = await db.execute(
+            select(Camera).where(Camera.agent_id == agent.id).limit(1)
+        )
+        cam = cam_res.scalar_one_or_none()
+        if cam:
+            resolved_camera_id = cam.id
+
+    if not resolved_camera_id:
+        # Auto-provision camera if none exists for agent
+        new_cam = Camera(
+            id=uuid4(),
+            agent_id=agent.id,
+            name=camera_location or f"Camera {clean_cam_str}",
+            local_camera_id=clean_cam_str[:50],
+            encrypted_rtsp_url="local://auto-provisioned",
+            location=camera_location or "Surveillance Zone",
+            status="ACTIVE",
+        )
+        db.add(new_cam)
+        await db.flush()
+        resolved_camera_id = new_cam.id
+
     # 1. Save evidence media files
     face_crop_path = await save_upload_file(
         file=face_crop,
@@ -96,9 +155,9 @@ async def report_sighting(
     # 2. Create Sighting record
     sighting = Sighting(
         id=uuid4(),
-        person_id=person_id,
+        person_id=resolved_person_id,
         agent_id=agent.id,
-        camera_id=camera_id,
+        camera_id=resolved_camera_id,
         similarity_score=similarity_score,
         confidence_level=confidence_level,
         num_frames_matched=num_frames_matched,
@@ -117,7 +176,7 @@ async def report_sighting(
 
     # 3. Lookup person to notify the creator/family and broadcast to dashboard
     result = await db.execute(
-        select(MissingPerson).where(MissingPerson.id == person_id)
+        select(MissingPerson).where(MissingPerson.id == resolved_person_id)
     )
     person = result.scalar_one_or_none()
 
@@ -131,10 +190,10 @@ async def report_sighting(
 
     sighting_data = {
         "sighting_id": str(sighting.id),
-        "person_id": str(person_id),
+        "person_id": str(resolved_person_id),
         "person_name": person_name,
         "similarity": float(similarity_score),
-        "camera_id": str(camera_id),
+        "camera_id": str(resolved_camera_id),
         "camera_location": camera_location or "CCTV Surveillance Camera",
         "confidence_level": confidence_level,
         "face_crop_path": face_crop_path,
@@ -170,6 +229,7 @@ async def report_sighting(
         except Exception as se:
             logger.error(f"Failed to broadcast sighting to dashboard: {se}")
 
+    sighting.person_name = person_name
     return sighting
 
 
@@ -195,7 +255,7 @@ async def confirm_sighting_match(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Confirm a sighting match (operator review action)."""
+    """Confirm a sighting match (operator review action) and close active search."""
     notes = review.review_notes if review else None
     confirmed = await confirm_sighting(
         db=db,
@@ -208,6 +268,53 @@ async def confirm_sighting_match(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sighting not found",
         )
+
+    # Dispatch resolution notification and SSE broadcast informing that active search is closed
+    person = confirmed.person
+    if not person and confirmed.person_id:
+        p_res = await db.execute(select(MissingPerson).where(MissingPerson.id == confirmed.person_id))
+        person = p_res.scalar_one_or_none()
+
+    if person:
+        title = f"Case Resolved: {person.full_name} Found"
+        body = (
+            f"Verified CCTV match confirmed on camera {confirmed.camera_location or 'CCTV'}. "
+            f"Active search has been closed."
+        )
+        try:
+            await dispatch_sighting_alert(
+                db=db,
+                user_id=person.user_id,
+                title=title,
+                body=body,
+                sighting_id=confirmed.id,
+                data={
+                    "event_type": "CASE_RESOLVED",
+                    "status": "FOUND",
+                    "person_id": str(person.id),
+                    "person_name": person.full_name,
+                    "camera_location": confirmed.camera_location or "CCTV",
+                    "similarity": float(confirmed.similarity_score or 0.0),
+                    "confidence_level": "CONFIRMED",
+                },
+                notif_type="CONFIRMATION",
+            )
+        except Exception as ne:
+            logger.error(f"Failed to dispatch case resolution alert: {ne}")
+    else:
+        try:
+            sse_payload = {
+                "event": "sighting",
+                "type": "CONFIRMATION",
+                "sighting_id": str(confirmed.id),
+                "title": "Match Confirmed",
+                "body": f"Sighting {confirmed.id} confirmed. Active search closed.",
+                "status": "CONFIRMED",
+            }
+            await sse_manager.publish("dashboard_sightings", sse_payload)
+        except Exception as se:
+            logger.error(f"Failed to broadcast match confirmation to dashboard: {se}")
+
     return confirmed
 
 

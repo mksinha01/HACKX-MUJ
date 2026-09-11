@@ -1,6 +1,7 @@
 """Embedding synchronization worker for Edge Agent."""
 import base64
 import logging
+import os
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -58,7 +59,7 @@ class EmbeddingSyncer:
             logger.info("Full sync flag received — resetting local embedding cache")
             self.local_db.clear_embeddings()
 
-        # 1. Decode and store new/modified embeddings
+        # 1. Decode and store new/modified embeddings with photos and metadata
         stored_items = []
         for p in persons_data:
             b64_data = p.get("embedding_bytes", "")
@@ -68,13 +69,62 @@ class EmbeddingSyncer:
                 logger.warning(f"Failed to decode base64 embedding for item {p.get('embedding_id')}: {e}")
                 continue
 
+            person_id = str(p["person_id"])
+            photo_url = p.get("photo_url")
+            local_photo_path = None
+
+            # Resolve reference photo locally
+            if photo_url:
+                clean_rel = photo_url.lstrip("/\\")
+                candidate_paths = [
+                    os.path.abspath(clean_rel),
+                    os.path.abspath(os.path.join(os.getcwd(), clean_rel)),
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", clean_rel)),
+                ]
+                for cp in candidate_paths:
+                    if os.path.isfile(cp):
+                        local_photo_path = cp
+                        break
+
+                # Download and cache from backend if not local
+                if not local_photo_path:
+                    try:
+                        ref_dir = os.path.abspath("evidence/reference_photos")
+                        os.makedirs(ref_dir, exist_ok=True)
+                        ext = os.path.splitext(clean_rel)[1] or ".jpg"
+                        target_file = os.path.join(ref_dir, f"{person_id}{ext}")
+                        req_path = photo_url if photo_url.startswith("/") else f"/{clean_rel}"
+                        resp_img = self.api_client._client.get(req_path)
+                        if resp_img.status_code == 200 and resp_img.content:
+                            with open(target_file, "wb") as pf:
+                                pf.write(resp_img.content)
+                            local_photo_path = target_file
+                    except Exception as err:
+                        logger.debug(f"Could not cache reference photo for {person_id}: {err}")
+
+            meta = {
+                "age": p.get("age"),
+                "gender": p.get("gender"),
+                "height_cm": p.get("height_cm"),
+                "description": p.get("description"),
+                "last_seen_location": p.get("last_seen_location"),
+                "last_seen_time": p.get("last_seen_time"),
+                "contact_info": p.get("contact_info"),
+                "reporter_name": p.get("reporter_name"),
+                "reporter_email": p.get("reporter_email"),
+                "reporter_phone": p.get("reporter_phone"),
+                "created_at": p.get("created_at"),
+            }
+
             stored_items.append(
                 {
                     "id": str(p["embedding_id"]),
-                    "person_id": str(p["person_id"]),
+                    "person_id": person_id,
                     "person_name": p.get("person_name"),
                     "embedding_data": raw_bytes,
-                    "photo_url": p.get("photo_url"),
+                    "photo_url": photo_url,
+                    "local_photo_path": local_photo_path,
+                    "metadata": meta,
                 }
             )
 

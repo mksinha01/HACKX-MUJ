@@ -28,6 +28,7 @@ async def dispatch_sighting_alert(
     body: str,
     sighting_id: UUID,
     data: Optional[Dict[str, Any]] = None,
+    notif_type: str = "SIGHTING",
 ) -> Notification:
     """
     Dispatches a sighting alert across three channels:
@@ -43,7 +44,7 @@ async def dispatch_sighting_alert(
     notif = await create_notification(
         db=db,
         user_id=user_id,
-        type="SIGHTING",
+        type=notif_type,
         title=title,
         body=body,
         data=payload_data,
@@ -55,6 +56,7 @@ async def dispatch_sighting_alert(
         "event": "sighting",
         "notification_id": str(notif.id),
         "sighting_id": str(sighting_id),
+        "type": notif_type,
         "title": title,
         "body": body,
         **payload_data,
@@ -70,7 +72,7 @@ async def dispatch_sighting_alert(
             fcm_data = {
                 "sighting_id": str(sighting_id),
                 "notification_id": str(notif.id),
-                "type": "SIGHTING",
+                "type": notif_type,
                 **{k: str(v) for k, v in payload_data.items()},
             }
             message = messaging.Message(

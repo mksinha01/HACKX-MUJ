@@ -41,6 +41,7 @@ class StreamWorker(QThread):
         reader: Optional[RTSPReader] = None,
         pipeline: Optional[EdgeAIPipeline] = None,
         target_fps: int = 15,
+        local_db: Optional[Any] = None,
         parent: Optional[Any] = None,
     ):
         super().__init__(parent)
@@ -50,6 +51,7 @@ class StreamWorker(QThread):
         self.reader = reader
         self.pipeline = pipeline
         self.target_fps = target_fps
+        self.local_db = local_db
 
         self._stop_event = threading.Event()
         self._fps_counter = 0
@@ -75,11 +77,30 @@ class StreamWorker(QThread):
 
     def _on_pipeline_match(self, match_event: MatchEvent, evidence: Evidence) -> None:
         """Callback from EdgeAIPipeline upon match confirmation."""
+        person_id = getattr(match_event, "person_id", "UNKNOWN")
+        person_name = getattr(evidence, "metadata", {}).get("person_name", person_id)
+        photo_url = None
+        registered_photo_path = None
+        meta = {}
+
+        if self.local_db is not None and person_id != "UNKNOWN":
+            try:
+                details = self.local_db.get_person_details(str(person_id))
+                if details:
+                    person_name = details.get("person_name") or person_name
+                    photo_url = details.get("photo_url")
+                    registered_photo_path = details.get("local_photo_path")
+                    meta = details.get("metadata") or {}
+            except Exception as e:
+                logger.debug(f"Failed to lookup person details for {person_id}: {e}")
+
         sighting_payload = {
             "camera_index": self.camera_index,
             "camera_id": self.camera_id,
-            "person_id": getattr(match_event, "person_id", "UNKNOWN"),
-            "person_name": getattr(evidence, "metadata", {}).get("person_name", match_event.person_id),
+            "person_id": person_id,
+            "person_name": person_name,
+            "photo_url": photo_url,
+            "registered_photo_path": registered_photo_path,
             "similarity": float(getattr(match_event, "score", 0.0)),
             "timestamp": getattr(match_event, "timestamp", time.time()),
             "face_crop_path": getattr(evidence, "crop_path", ""),
@@ -89,10 +110,20 @@ class StreamWorker(QThread):
             "status": "CONFIRMED",
             "scores": getattr(match_event, "scores", [match_event.score]),
             "frames_matched": getattr(match_event, "frames", 3),
+            "metadata": meta,
+            "age": meta.get("age"),
+            "gender": meta.get("gender"),
+            "description": meta.get("description"),
+            "last_seen_location": meta.get("last_seen_location"),
+            "last_seen_time": meta.get("last_seen_time"),
+            "contact_info": meta.get("contact_info"),
+            "reporter_name": meta.get("reporter_name"),
+            "reporter_email": meta.get("reporter_email"),
+            "reporter_phone": meta.get("reporter_phone"),
         }
         logger.warning(
             f"[StreamWorker {self.camera_id}] SIGHTING CONFIRMED: "
-            f"{sighting_payload['person_id']} ({sighting_payload['similarity']*100:.1f}%)"
+            f"{sighting_payload['person_name']} / {sighting_payload['person_id']} ({sighting_payload['similarity']*100:.1f}%)"
         )
         self.sighting_detected.emit(sighting_payload)
 

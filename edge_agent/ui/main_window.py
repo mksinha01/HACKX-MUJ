@@ -334,6 +334,7 @@ class MainWindow(QMainWindow):
                     rtsp_url=url,
                     pipeline=pipeline,
                     target_fps=self.settings.ai.tracking_fps,
+                    local_db=self.local_db,
                 )
 
                 # Connect signals (Rule 8: Cross thread boundaries strictly through Qt signals)
@@ -353,6 +354,7 @@ class MainWindow(QMainWindow):
                     camera_id=cid,
                     rtsp_url="",
                     target_fps=self.settings.ai.tracking_fps,
+                    local_db=self.local_db,
                 )
                 idle_worker.frame_processed.connect(feed_widget.update_frame)
                 idle_worker.fps_updated.connect(feed_widget.update_fps)
@@ -464,6 +466,24 @@ class MainWindow(QMainWindow):
         """
         person_id = sighting.get("person_id", "UNKNOWN")
         logger.info(f"Biometric match directly confirmed by agent for person: {person_id}")
+
+        # 0. Enrich with person metadata and reference photo if missing
+        if self.local_db is not None and person_id != "UNKNOWN":
+            try:
+                details = self.local_db.get_person_details(str(person_id))
+                if details:
+                    if not sighting.get("person_name") or sighting.get("person_name") == person_id:
+                        sighting["person_name"] = details.get("person_name") or person_id
+                    if not sighting.get("photo_url"):
+                        sighting["photo_url"] = details.get("photo_url")
+                    if not sighting.get("registered_photo_path"):
+                        sighting["registered_photo_path"] = details.get("local_photo_path")
+                    meta = details.get("metadata") or {}
+                    for k in ("age", "gender", "height_cm", "description", "last_seen_location", "last_seen_time", "contact_info", "reporter_name", "reporter_email", "reporter_phone"):
+                        if not sighting.get(k) and meta.get(k):
+                            sighting[k] = meta[k]
+            except Exception as e:
+                logger.debug(f"Could not enrich sighting details for {person_id}: {e}")
 
         # 1. Ensure status is CONFIRMED
         sighting["status"] = "CONFIRMED"

@@ -114,7 +114,7 @@ export const ReportDetailPage: React.FC = () => {
           <div className="report-detail__hero-photo">
             {activePhotoUrl ? <img src={activePhotoUrl} alt={person.full_name} /> : <User size={64} aria-hidden="true" />}
             <span className="report-detail__status"><StatusBadge status={person.status} /></span>
-            {activeFaceCropUrl && <div className="report-detail__face-inset"><img src={activeFaceCropUrl} alt="AI face crop" /><span><strong>ArcFace 512-D</strong><small>Face vector active</small></span></div>}
+            {activeFaceCropUrl && <div className="report-detail__face-inset"><img src={activeFaceCropUrl} alt="AI face crop" /><span><strong>ArcFace 512-D</strong><small>{person.status === 'ACTIVE' ? 'Face vector active' : 'Search closed (Vector inactive)'}</small></span></div>}
           </div>
           {photos.length > 1 && <div className="thumbnail-strip">{photos.map((photo, index) => <button key={photo.id || index} type="button" className={index === selectedPhotoIndex ? 'is-selected' : ''} onClick={() => setSelectedPhotoIndex(index)}><img src={resolveUrl(photo.original_path)} alt={`${person.full_name} photo ${index + 1}`} /></button>)}</div>}
         </div>

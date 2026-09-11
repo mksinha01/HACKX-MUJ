@@ -143,6 +143,10 @@ def create_app() -> FastAPI:
     # 6. Include REST API Routers
     application.include_router(api_router)
 
+    # 7. Direct SSE stream mount (/events/stream alias for EventSource clients)
+    from app.api.sse import router as sse_router
+    application.include_router(sse_router)
+
     return application
 
 

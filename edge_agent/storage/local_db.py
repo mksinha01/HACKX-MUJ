@@ -1,4 +1,5 @@
 """SQLite storage for Edge Agent local state, camera mappings, embeddings, and offline sighting queue."""
+import json
 import logging
 import os
 import sqlite3
@@ -33,7 +34,7 @@ class SQLiteStore:
         with self._lock:
             conn = sqlite3.connect(
                 self.db_path,
-                timeout=10.0,
+                timeout=15.0,
                 check_same_thread=False,
             )
             conn.row_factory = sqlite3.Row
@@ -66,6 +67,7 @@ class SQLiteStore:
             )
 
             # 2. Camera mappings table (Local ID -> Backend UUID)
+            # Fix #17: Local name to backend UUID mapping
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS camera_mappings (
@@ -86,6 +88,8 @@ class SQLiteStore:
                     person_name TEXT,
                     embedding_data BLOB NOT NULL,
                     photo_url TEXT,
+                    local_photo_path TEXT,
+                    metadata_json TEXT,
                     synced_at TEXT DEFAULT (datetime('now'))
                 );
                 """
@@ -96,6 +100,14 @@ class SQLiteStore:
                 ON cached_embeddings(person_id);
                 """
             )
+
+            # Ensure new columns exist if table was already created
+            cursor.execute("PRAGMA table_info(cached_embeddings)")
+            existing_cols = {row["name"] for row in cursor.fetchall()}
+            if "local_photo_path" not in existing_cols:
+                cursor.execute("ALTER TABLE cached_embeddings ADD COLUMN local_photo_path TEXT;")
+            if "metadata_json" not in existing_cols:
+                cursor.execute("ALTER TABLE cached_embeddings ADD COLUMN metadata_json TEXT;")
 
             # 4. Durable offline pending sightings queue
             # Fix #18: Guarantee zero evidence loss during network interruptions
@@ -268,6 +280,8 @@ class SQLiteStore:
         person_name: Optional[str],
         embedding_data: bytes,
         photo_url: Optional[str] = None,
+        local_photo_path: Optional[str] = None,
+        metadata_json: Optional[str] = None,
     ) -> None:
         """
         Store a face embedding. Multi-photo support: PRIMARY KEY is id (embedding UUID).
@@ -277,16 +291,18 @@ class SQLiteStore:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO cached_embeddings (id, person_id, person_name, embedding_data, photo_url, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO cached_embeddings (id, person_id, person_name, embedding_data, photo_url, local_photo_path, metadata_json, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     person_id = excluded.person_id,
                     person_name = excluded.person_name,
                     embedding_data = excluded.embedding_data,
                     photo_url = excluded.photo_url,
+                    local_photo_path = COALESCE(excluded.local_photo_path, cached_embeddings.local_photo_path),
+                    metadata_json = COALESCE(excluded.metadata_json, cached_embeddings.metadata_json),
                     synced_at = excluded.synced_at;
                 """,
-                (id, person_id, person_name, sqlite3.Binary(embedding_data), photo_url, now_str),
+                (id, person_id, person_name, sqlite3.Binary(embedding_data), photo_url, local_photo_path, metadata_json, now_str),
             )
 
     def save_embeddings_batch(self, items: List[Dict[str, Any]]) -> int:
@@ -294,28 +310,39 @@ class SQLiteStore:
         if not items:
             return 0
         now_str = datetime.now(timezone.utc).isoformat()
-        params = [
-            (
-                item["id"],
-                item["person_id"],
-                item.get("person_name"),
-                sqlite3.Binary(item["embedding_data"]),
-                item.get("photo_url"),
-                now_str,
+        params = []
+        for item in items:
+            raw_meta = item.get("metadata_json")
+            if not raw_meta and item.get("metadata"):
+                try:
+                    raw_meta = json.dumps(item["metadata"])
+                except Exception:
+                    raw_meta = None
+            params.append(
+                (
+                    item["id"],
+                    item["person_id"],
+                    item.get("person_name"),
+                    sqlite3.Binary(item["embedding_data"]),
+                    item.get("photo_url"),
+                    item.get("local_photo_path"),
+                    raw_meta,
+                    now_str,
+                )
             )
-            for item in items
-        ]
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.executemany(
                 """
-                INSERT INTO cached_embeddings (id, person_id, person_name, embedding_data, photo_url, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO cached_embeddings (id, person_id, person_name, embedding_data, photo_url, local_photo_path, metadata_json, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     person_id = excluded.person_id,
                     person_name = excluded.person_name,
                     embedding_data = excluded.embedding_data,
                     photo_url = excluded.photo_url,
+                    local_photo_path = COALESCE(excluded.local_photo_path, cached_embeddings.local_photo_path),
+                    metadata_json = COALESCE(excluded.metadata_json, cached_embeddings.metadata_json),
                     synced_at = excluded.synced_at;
                 """,
                 params,
@@ -327,7 +354,7 @@ class SQLiteStore:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, person_id, person_name, embedding_data, photo_url, synced_at FROM cached_embeddings"
+                "SELECT id, person_id, person_name, embedding_data, photo_url, local_photo_path, metadata_json, synced_at FROM cached_embeddings"
             )
             rows = cursor.fetchall()
             return [
@@ -337,6 +364,8 @@ class SQLiteStore:
                     "person_name": row["person_name"],
                     "embedding_data": bytes(row["embedding_data"]),
                     "photo_url": row["photo_url"],
+                    "local_photo_path": row["local_photo_path"],
+                    "metadata_json": row["metadata_json"],
                     "synced_at": row["synced_at"],
                 }
                 for row in rows
@@ -344,11 +373,19 @@ class SQLiteStore:
 
     def get_embeddings_for_person(self, person_id: str) -> List[Dict[str, Any]]:
         """Retrieve all cached embeddings for a specific person."""
+        clean_id = (person_id or "").strip()
+        variations = [clean_id]
+        if "-" in clean_id:
+            variations.append(clean_id.replace("-", ""))
+        elif len(clean_id) == 32:
+            variations.append(f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:]}")
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in variations)
             cursor.execute(
-                "SELECT id, person_id, person_name, embedding_data, photo_url, synced_at FROM cached_embeddings WHERE person_id = ?",
-                (person_id,),
+                f"SELECT id, person_id, person_name, embedding_data, photo_url, local_photo_path, metadata_json, synced_at FROM cached_embeddings WHERE person_id IN ({placeholders})",
+                variations,
             )
             rows = cursor.fetchall()
             return [
@@ -358,10 +395,61 @@ class SQLiteStore:
                     "person_name": row["person_name"],
                     "embedding_data": bytes(row["embedding_data"]),
                     "photo_url": row["photo_url"],
+                    "local_photo_path": row["local_photo_path"],
+                    "metadata_json": row["metadata_json"],
                     "synced_at": row["synced_at"],
                 }
                 for row in rows
             ]
+
+    def get_person_details(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve cached metadata and reference photo path for a person.
+        Supports both hyphenated and non-hyphenated UUID formats.
+        """
+        if not person_id:
+            return None
+        clean_id = str(person_id).strip()
+        variations = [clean_id]
+        if "-" in clean_id:
+            variations.append(clean_id.replace("-", ""))
+        elif len(clean_id) == 32:
+            variations.append(f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:]}")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in variations)
+            cursor.execute(
+                f"""
+                SELECT id, person_id, person_name, photo_url, local_photo_path, metadata_json, synced_at
+                FROM cached_embeddings
+                WHERE person_id IN ({placeholders})
+                ORDER BY CASE WHEN local_photo_path IS NOT NULL AND local_photo_path != '' THEN 0 ELSE 1 END,
+                         synced_at DESC
+                LIMIT 1
+                """,
+                variations,
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            meta: Dict[str, Any] = {}
+            if row["metadata_json"]:
+                try:
+                    meta = json.loads(row["metadata_json"])
+                except Exception:
+                    meta = {}
+
+            return {
+                "id": row["id"],
+                "person_id": row["person_id"],
+                "person_name": row["person_name"],
+                "photo_url": row["photo_url"],
+                "local_photo_path": row["local_photo_path"],
+                "metadata": meta,
+                "synced_at": row["synced_at"],
+            }
 
     def remove_embeddings_for_persons(self, person_ids: List[str]) -> int:
         """

@@ -92,8 +92,20 @@ class TimelineWidget(QWidget):
         self.table.setItem(0, 0, item_time)
 
         # Item 1: Person
-        person_display = f"{person_name} ({person_id})" if person_name != person_id else person_id
+        reporter_str = sighting.get("reporter_name", "")
+        if person_name and person_name != person_id:
+            person_display = f"{person_name} ({person_id[:8]}...)"
+        else:
+            person_display = f"Person {person_id[:8]}..."
         item_person = QTableWidgetItem(person_display)
+        tooltip_lines = [f"Name: {person_name}", f"Case ID: {person_id}"]
+        if reporter_str:
+            tooltip_lines.append(f"Reported By: {reporter_str}")
+        if sighting.get("reporter_email"):
+            tooltip_lines.append(f"Email: {sighting.get('reporter_email')}")
+        if sighting.get("contact_info"):
+            tooltip_lines.append(f"Contact: {sighting.get('contact_info')}")
+        item_person.setToolTip("\n".join(tooltip_lines))
         self.table.setItem(0, 1, item_person)
 
         # Item 2: Camera

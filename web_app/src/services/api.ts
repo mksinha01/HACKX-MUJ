@@ -117,12 +117,14 @@ export const sightingsApi = {
   },
   confirm: async (id: string, notes?: string): Promise<SightingResponse> => {
     const res = await apiClient.put<SightingResponse>(`/api/sightings/${id}/confirm`, {
+      status: 'CONFIRMED',
       review_notes: notes
     });
     return res.data;
   },
   reject: async (id: string, notes?: string): Promise<SightingResponse> => {
     const res = await apiClient.put<SightingResponse>(`/api/sightings/${id}/reject`, {
+      status: 'REJECTED',
       review_notes: notes
     });
     return res.data;

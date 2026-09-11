@@ -28,6 +28,7 @@ export class SseService {
   private listeners: SightingListener[] = [];
   private audioCtx: AudioContext | null = null;
   private currentToken: string | null = null;
+  private recentSightingIds = new Set<string>();
 
   constructor() {
     // Lazy AudioContext setup
@@ -92,6 +93,15 @@ export class SseService {
     this.eventSource.addEventListener('sighting', (e: MessageEvent) => {
       try {
         const data: SightingAlertEvent = JSON.parse(e.data);
+        const dedupeKey = `${data.sighting_id}_${data.notification_id || ''}`;
+        if (data.sighting_id && this.recentSightingIds.has(dedupeKey)) {
+          return;
+        }
+        if (data.sighting_id) {
+          this.recentSightingIds.add(dedupeKey);
+          setTimeout(() => this.recentSightingIds.delete(dedupeKey), 8000);
+        }
+
         this.playSyntheticChime();
         this.listeners.forEach(fn => fn(data));
       } catch (err) {

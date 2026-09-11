@@ -1,5 +1,5 @@
 """CRUD operations for face_embeddings table."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Set
 from uuid import UUID
 import numpy as np
@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.face_embedding import FaceEmbedding
 from app.models.missing_person import MissingPerson
+from app.models.photo import Photo
+from app.models.user import User
 
 
 async def store_embedding(
@@ -48,8 +50,22 @@ async def get_active_embeddings(db: AsyncSession) -> List[dict]:
             FaceEmbedding.quality_score,
             FaceEmbedding.created_at,
             MissingPerson.full_name,
+            MissingPerson.age,
+            MissingPerson.gender,
+            MissingPerson.height_cm,
+            MissingPerson.description,
+            MissingPerson.last_seen_location,
+            MissingPerson.last_seen_time,
+            MissingPerson.contact_info,
+            Photo.face_crop_path,
+            Photo.original_path,
+            User.name.label("reporter_name"),
+            User.email.label("reporter_email"),
+            User.phone.label("reporter_phone"),
         )
         .join(MissingPerson, FaceEmbedding.person_id == MissingPerson.id)
+        .outerjoin(Photo, FaceEmbedding.photo_id == Photo.id)
+        .outerjoin(User, MissingPerson.user_id == User.id)
         .where(MissingPerson.status == "ACTIVE")
         .where(FaceEmbedding.is_active == True)  # noqa: E712
     )
@@ -62,6 +78,17 @@ async def get_active_embeddings(db: AsyncSession) -> List[dict]:
             "embedding_bytes": row.embedding,
             "quality_score": row.quality_score,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "photo_url": row.face_crop_path or row.original_path,
+            "age": row.age,
+            "gender": row.gender,
+            "height_cm": row.height_cm,
+            "description": row.description,
+            "last_seen_location": row.last_seen_location,
+            "last_seen_time": row.last_seen_time.isoformat() if row.last_seen_time else None,
+            "contact_info": row.contact_info,
+            "reporter_name": row.reporter_name,
+            "reporter_email": row.reporter_email,
+            "reporter_phone": row.reporter_phone,
         }
         for row in rows
     ]
@@ -82,8 +109,22 @@ async def get_embeddings_since(
             FaceEmbedding.quality_score,
             FaceEmbedding.created_at,
             MissingPerson.full_name,
+            MissingPerson.age,
+            MissingPerson.gender,
+            MissingPerson.height_cm,
+            MissingPerson.description,
+            MissingPerson.last_seen_location,
+            MissingPerson.last_seen_time,
+            MissingPerson.contact_info,
+            Photo.face_crop_path,
+            Photo.original_path,
+            User.name.label("reporter_name"),
+            User.email.label("reporter_email"),
+            User.phone.label("reporter_phone"),
         )
         .join(MissingPerson, FaceEmbedding.person_id == MissingPerson.id)
+        .outerjoin(Photo, FaceEmbedding.photo_id == Photo.id)
+        .outerjoin(User, MissingPerson.user_id == User.id)
         .where(MissingPerson.status == "ACTIVE")
         .where(FaceEmbedding.is_active == True)  # noqa: E712
         .where(
@@ -103,6 +144,17 @@ async def get_embeddings_since(
             "embedding_bytes": row.embedding,
             "quality_score": row.quality_score,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "photo_url": row.face_crop_path or row.original_path,
+            "age": row.age,
+            "gender": row.gender,
+            "height_cm": row.height_cm,
+            "description": row.description,
+            "last_seen_location": row.last_seen_location,
+            "last_seen_time": row.last_seen_time.isoformat() if row.last_seen_time else None,
+            "contact_info": row.contact_info,
+            "reporter_name": row.reporter_name,
+            "reporter_email": row.reporter_email,
+            "reporter_phone": row.reporter_phone,
         }
         for row in rows
     ]
@@ -150,10 +202,11 @@ async def deactivate_embeddings_for_person(
     db: AsyncSession, person_id: UUID
 ) -> int:
     """Mark all embeddings for a person as inactive (e.g. when report is resolved)."""
+    now = datetime.now(timezone.utc)
     result = await db.execute(
         update(FaceEmbedding)
         .where(FaceEmbedding.person_id == person_id)
-        .values(is_active=False)
+        .values(is_active=False, updated_at=now)
     )
     await db.flush()
     return result.rowcount

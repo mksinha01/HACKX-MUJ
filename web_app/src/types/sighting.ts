@@ -4,6 +4,7 @@ export type ConfidenceLevel = 'CONFIRMED' | 'POSSIBLE' | 'REJECTED';
 export interface Sighting {
   id: string;
   person_id: string;
+  person_name?: string | null;
   camera_id: string;
   agent_id: string;
   similarity_score: number;

@@ -160,7 +160,7 @@ class AlertWidget(QDialog):
         main_layout.addWidget(comp_group)
 
         # 3. Telemetry Metadata Pane
-        meta_group = QGroupBox("Match Telemetry")
+        meta_group = QGroupBox("Match Telemetry & Report Provenance")
         meta_group.setStyleSheet("""
             QGroupBox {
                 background-color: #18181b;
@@ -172,7 +172,7 @@ class AlertWidget(QDialog):
             }
         """)
         meta_layout = QVBoxLayout(meta_group)
-        meta_layout.setContentsMargins(12, 10, 12, 10)
+        meta_layout.setContentsMargins(14, 12, 14, 12)
         meta_layout.setSpacing(8)
 
         person_id = self.sighting_data.get("person_id", "Unknown")
@@ -185,18 +185,77 @@ class AlertWidget(QDialog):
         sim_score = float(self.sighting_data.get("similarity", 0.0))
         sim_pct = sim_score * 100
 
-        # Person & Camera details grid
-        details_layout = QHBoxLayout()
-        details_left = QLabel(f"<b>Person:</b> {person_name} (<code>{person_id}</code>)")
-        details_left.setStyleSheet("color: #f4f4f5; font-size: 13px;")
-        details_right = QLabel(f"<b>Camera:</b> {camera_id} &nbsp;|&nbsp; <b>Time:</b> {timestamp_str}")
-        details_right.setStyleSheet("color: #a1a1aa; font-size: 12px;")
-        details_layout.addWidget(details_left)
-        details_layout.addStretch()
-        details_layout.addWidget(details_right)
-        meta_layout.addLayout(details_layout)
+        age = self.sighting_data.get("age")
+        gender = self.sighting_data.get("gender")
+        reporter_name = self.sighting_data.get("reporter_name")
+        reporter_email = self.sighting_data.get("reporter_email")
+        reporter_phone = self.sighting_data.get("reporter_phone")
+        contact_info = self.sighting_data.get("contact_info")
+        last_seen = self.sighting_data.get("last_seen_location")
+        description = self.sighting_data.get("description")
 
-        # Similarity Score Progress Bar
+        # Row 1: Person Identity & Case
+        id_layout = QHBoxLayout()
+        person_lbl = QLabel(f"<b>Person:</b> <span style='color: #38bdf8; font-size: 14px; font-weight: 700;'>{person_name}</span>")
+        person_lbl.setStyleSheet("font-size: 13px; color: #f4f4f5;")
+        demo_parts = []
+        if age:
+            demo_parts.append(f"Age: {age}")
+        if gender:
+            demo_parts.append(str(gender))
+        demo_str = " | ".join(demo_parts)
+        demo_lbl = QLabel(f"({demo_str})" if demo_str else "")
+        demo_lbl.setStyleSheet("font-size: 12px; color: #a1a1aa;")
+        id_layout.addWidget(person_lbl)
+        if demo_str:
+            id_layout.addWidget(demo_lbl)
+        id_layout.addStretch()
+        id_lbl = QLabel(f"<b>Case ID:</b> <code>{person_id[:16]}...</code>")
+        id_lbl.setToolTip(person_id)
+        id_lbl.setStyleSheet("color: #71717a; font-size: 11px;")
+        id_layout.addWidget(id_lbl)
+        meta_layout.addLayout(id_layout)
+
+        # Row 2: User Report Provenance (Rule 1 & Rule 3)
+        rep_layout = QHBoxLayout()
+        rep_text = f"<b>Reported By:</b> <span style='color: #34d399;'>{reporter_name or 'Verified Citizen Report'}</span>"
+        if reporter_email:
+            rep_text += f" &lt;{reporter_email}&gt;"
+        rep_lbl = QLabel(rep_text)
+        rep_lbl.setStyleSheet("font-size: 12px; color: #f4f4f5;")
+        contact_str = reporter_phone or contact_info or ""
+        contact_lbl = QLabel(f"<b>Contact:</b> {contact_str}" if contact_str else "")
+        contact_lbl.setStyleSheet("font-size: 12px; color: #a1a1aa;")
+        rep_layout.addWidget(rep_lbl)
+        if contact_str:
+            rep_layout.addSpacing(14)
+            rep_layout.addWidget(contact_lbl)
+        rep_layout.addStretch()
+        meta_layout.addLayout(rep_layout)
+
+        # Row 3: Last Seen Location & Attire
+        if last_seen or description:
+            desc_layout = QHBoxLayout()
+            desc_parts = []
+            if last_seen:
+                desc_parts.append(f"<b>Last Seen:</b> {last_seen}")
+            if description:
+                desc_parts.append(f"<b>Attire:</b> {description}")
+            desc_lbl = QLabel(" &nbsp;|&nbsp; ".join(desc_parts))
+            desc_lbl.setStyleSheet("font-size: 12px; color: #fbbf24;")
+            desc_layout.addWidget(desc_lbl)
+            desc_layout.addStretch()
+            meta_layout.addLayout(desc_layout)
+
+        # Row 4: Camera & Detection Time
+        cam_layout = QHBoxLayout()
+        cam_lbl = QLabel(f"<b>Camera:</b> {camera_id} &nbsp;|&nbsp; <b>Time:</b> {timestamp_str}")
+        cam_lbl.setStyleSheet("color: #a1a1aa; font-size: 12px;")
+        cam_layout.addWidget(cam_lbl)
+        cam_layout.addStretch()
+        meta_layout.addLayout(cam_layout)
+
+        # Row 5: Similarity Score Progress Bar
         sim_layout = QHBoxLayout()
         sim_text = QLabel(f"<b>Confidence:</b> {sim_pct:.1f}% Match")
         sim_text.setStyleSheet("color: #10b981; font-weight: 700; font-size: 13px;")
@@ -289,10 +348,42 @@ class AlertWidget(QDialog):
 
         main_layout.addLayout(btn_layout)
 
+    def _resolve_photo_path(self, path_or_url: Optional[str]) -> Optional[str]:
+        """Resolve a local path, workspace path, or URL to a valid file on disk."""
+        if not path_or_url:
+            return None
+
+        # Check if already a valid absolute or relative file path
+        if os.path.isfile(path_or_url):
+            return os.path.abspath(path_or_url)
+
+        # Normalize relative path (e.g. /uploads/faces/abc.jpg -> uploads/faces/abc.jpg)
+        clean = path_or_url.lstrip("/\\")
+        candidate_bases = [
+            os.getcwd(),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+            os.path.abspath("."),
+        ]
+        for base in candidate_bases:
+            candidate = os.path.abspath(os.path.join(base, clean))
+            if os.path.isfile(candidate):
+                return candidate
+
+        # Check evidence/reference_photos
+        person_id = self.sighting_data.get("person_id", "")
+        if person_id:
+            for ext in (".jpg", ".png", ".jpeg"):
+                ref_candidate = os.path.abspath(os.path.join("evidence", "reference_photos", f"{person_id}{ext}"))
+                if os.path.isfile(ref_candidate):
+                    return ref_candidate
+
+        return None
+
     def _load_photos(self) -> None:
         """Load and display registered reference photo and live face crop."""
         # 1. Load Live CCTV Detection Crop
-        crop_path = self.sighting_data.get("face_crop_path")
+        crop_path = self._resolve_photo_path(self.sighting_data.get("face_crop_path"))
         if crop_path and os.path.isfile(crop_path):
             pixmap = QPixmap(crop_path)
             if not pixmap.isNull():
@@ -301,25 +392,34 @@ class AlertWidget(QDialog):
             else:
                 self.live_crop_label.setText("Corrupt Crop")
         else:
-            self.live_crop_label.setText("Crop Not Found")
+            self.live_crop_label.setText("Live Detection Crop")
             self.live_crop_label.setStyleSheet("color: #71717a; font-size: 11px;")
 
         # 2. Load Registered Reference Photo
-        reg_photo = self.sighting_data.get("registered_photo_path")
-        if not reg_photo:
-            # Check photo_url or local cached photo
-            reg_photo = self.sighting_data.get("photo_url")
+        reg_photo = self.sighting_data.get("registered_photo_path") or self.sighting_data.get("photo_url")
+        resolved_reg = self._resolve_photo_path(reg_photo)
 
-        if reg_photo and os.path.isfile(reg_photo):
-            pixmap = QPixmap(reg_photo)
-            if not pixmap.isNull():
-                scaled = pixmap.scaled(176, 176, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.registered_photo_label.setPixmap(scaled)
-            else:
-                self.registered_photo_label.setText("Corrupt Photo")
+        pixmap = None
+        if resolved_reg and os.path.isfile(resolved_reg):
+            pixmap = QPixmap(resolved_reg)
+        elif reg_photo and reg_photo.startswith("http"):
+            try:
+                import urllib.request
+                req = urllib.request.Request(reg_photo, headers={"User-Agent": "EdgeAgent"})
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                    img_data = resp.read()
+                    img = QImage()
+                    if img.loadFromData(img_data):
+                        pixmap = QPixmap.fromImage(img)
+            except Exception as e:
+                logger.debug(f"Failed to load image from URL {reg_photo}: {e}")
+
+        if pixmap and not pixmap.isNull():
+            scaled = pixmap.scaled(176, 176, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.registered_photo_label.setPixmap(scaled)
         else:
-            # Fallback: display placeholder avatar or person ID
-            self.registered_photo_label.setText(f"Reference Photo\n({self.sighting_data.get('person_id', '')})")
+            pname = self.sighting_data.get("person_name") or self.sighting_data.get("person_id", "")
+            self.registered_photo_label.setText(f"Reference Photo\n({pname})")
             self.registered_photo_label.setStyleSheet("color: #71717a; font-size: 11px;")
 
     def _on_confirm(self) -> None:

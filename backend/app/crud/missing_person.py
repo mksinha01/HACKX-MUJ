@@ -1,4 +1,4 @@
-"""CRUD operations for missing_persons table."""
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.missing_person import MissingPerson
+from app.crud.face_embedding import deactivate_embeddings_for_person
 from app.schemas.missing_person import MissingPersonCreate, MissingPersonUpdate
 
 
@@ -103,6 +104,9 @@ async def update_report(
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(person, field, value)
+    if "status" in update_data and update_data["status"] in ["FOUND", "CLOSED"]:
+        person.updated_at = datetime.now(timezone.utc)
+        await deactivate_embeddings_for_person(db, report_id)
     await db.flush()
     await db.refresh(person)
     return person
@@ -116,5 +120,8 @@ async def update_report_status(
     if not person:
         return None
     person.status = status
+    person.updated_at = datetime.now(timezone.utc)
+    if status in ["FOUND", "CLOSED"]:
+        await deactivate_embeddings_for_person(db, report_id)
     await db.flush()
     return person

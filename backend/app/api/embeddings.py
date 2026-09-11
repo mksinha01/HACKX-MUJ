@@ -62,6 +62,17 @@ async def sync_embeddings(
                 embedding_bytes=b64_str,
                 quality_score=item.get("quality_score"),
                 created_at=item.get("created_at"),
+                photo_url=item.get("photo_url"),
+                age=item.get("age"),
+                gender=item.get("gender"),
+                height_cm=item.get("height_cm"),
+                description=item.get("description"),
+                last_seen_location=item.get("last_seen_location"),
+                last_seen_time=item.get("last_seen_time"),
+                contact_info=item.get("contact_info"),
+                reporter_name=item.get("reporter_name"),
+                reporter_email=item.get("reporter_email"),
+                reporter_phone=item.get("reporter_phone"),
             )
         )
 
